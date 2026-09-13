@@ -14,6 +14,7 @@ import Chat from './pages/Chat';
 import Groups from './pages/Groups';
 import QRPage from './pages/QRPage';
 import Settings from './pages/Settings';
+import CryptoDashboard from './pages/CryptoDashboard';
 
 export default function App() {
   const [identity, setIdentity] = useState(() => getIdentity());
@@ -41,12 +42,13 @@ export default function App() {
         return;
       }
 
-      const keyToUse = data.ephemeral_key || senderContact.public_key;
+      const keyToUse = data.dr_ephemeral || data.ephemeral_key || senderContact.public_key;
       const plaintext = decryptMessageWithForwardSecrecy(
         data.encrypted_payload,
         data.nonce,
         keyToUse,
-        identity.secretKey
+        identity.secretKey,
+        data.sender_id // Use sender_id as conversationId for ratchet state
       );
 
       if (plaintext) {
@@ -204,6 +206,10 @@ export default function App() {
           <Route
             path="/settings"
             element={hasIdentity ? <Settings /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/dashboard"
+            element={hasIdentity ? <CryptoDashboard /> : <Navigate to="/" replace />}
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

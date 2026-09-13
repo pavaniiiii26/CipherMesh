@@ -10,6 +10,7 @@ import {
   encryptGroupMessage,
   verifyGroupMessageSignature
 } from '../crypto/groupCrypto';
+import { encryptFile, decryptFile, isFilePayload } from '../crypto/fileSharing';
 import { getContact } from '../store/contacts';
 import {
   getMessages,
@@ -49,6 +50,8 @@ export default function Chat() {
   const [contact, setContact] = useState(null);
   const [typing, setTyping] = useState(false);
   const [showSafetyModal, setShowSafetyModal] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(null);
+  const fileInputRef = useRef(null);
 
   // Settings: privacy toggles and default TTL
   const getSettings = useCallback(() => {
@@ -117,20 +120,33 @@ export default function Chat() {
         const senderContact = getContact(data.sender_id);
         if (!senderContact) return;
 
-        // Decrypt with forward secrecy ephemeral key or static key
-        const keyToUse = data.ephemeral_key || senderContact.public_key;
+        // Decrypt with Double Ratchet (preferred) or forward secrecy ephemeral key
+        const keyToUse = data.dr_ephemeral || data.ephemeral_key || senderContact.public_key;
         const plaintext = decryptMessageWithForwardSecrecy(
           data.encrypted_payload,
           data.nonce,
           keyToUse,
-          identity.secretKey
+          identity.secretKey,
+          conversationId // Pass for Double Ratchet state lookup
         );
 
         if (plaintext) {
+          // Check if this is an encrypted file payload
+          let messageData = { text: plaintext };
+          if (isFilePayload(plaintext)) {
+            try {
+              const fileData = decryptFile(plaintext, identity.secretKey);
+              messageData = { text: null, file: fileData };
+            } catch (err) {
+              console.warn('[File] Failed to decrypt file:', err);
+            }
+          }
+
           const msgs = addMessage(conversationId, {
             id: data.id,
             senderId: data.sender_id,
-            text: plaintext,
+            text: messageData.text,
+            file: messageData.file || null,
             timestamp: data.timestamp,
             status: 'delivered',
             nonce: data.nonce,
@@ -180,11 +196,23 @@ export default function Chat() {
 
         const plaintext = decryptGroupMessage(data.encrypted_payload, data.nonce, gk);
         if (plaintext) {
+          // Check if this is an encrypted file payload
+          let messageData = { text: plaintext };
+          if (isFilePayload(plaintext)) {
+            try {
+              const fileData = decryptFile(plaintext, gk);
+              messageData = { text: null, file: fileData };
+            } catch (err) {
+              console.warn('[File] Failed to decrypt group file:', err);
+            }
+          }
+
           const msgs = addMessage(conversationId, {
             id: data.id,
             senderId: data.sender_id,
             senderName: senderContact?.display_name || data.sender_id.substring(0, 8),
-            text: plaintext,
+            text: messageData.text,
+            file: messageData.file || null,
             timestamp: data.timestamp,
             status: 'delivered',
             isGroup: true,
@@ -284,12 +312,13 @@ export default function Chat() {
         privacy_mode: privacyMode,
       });
     } else {
-      // 1:1 message with Ephemeral Forward Secrecy
+      // 1:1 message with Double Ratchet + Forward Secrecy
       if (!contact) return;
 
-      const { encrypted, nonce, ephemeralPublicKey } = encryptMessageWithForwardSecrecy(
+      const { encrypted, nonce, ephemeralPublicKey, dr_ephemeral, dr_message_number, dr_flag } = encryptMessageWithForwardSecrecy(
         text,
-        contact.public_key
+        contact.public_key,
+        conversationId // Pass conversationId for Double Ratchet
       );
 
       const localId = `local-${Date.now()}`;
@@ -309,10 +338,108 @@ export default function Chat() {
         recipient_id: contactUserId,
         encrypted_payload: encrypted,
         nonce,
-        ephemeral_key: ephemeralPublicKey,
+        ephemeral_key: dr_flag ? null : ephemeralPublicKey,
+        dr_ephemeral: dr_flag ? dr_ephemeral : null,
+        dr_message_number: dr_flag ? dr_message_number : null,
         ttl: ttl > 0 ? ttl : null,
         privacy_mode: privacyMode,
       });
+    }
+  };
+
+  // File upload handler
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !identity) return;
+
+    const settings = getSettings();
+    const privacyMode = settings.privacyMode || 'direct';
+    const now = Date.now() / 1000;
+    const expiresAt = ttl > 0 ? (now + ttl) : null;
+
+    try {
+      setUploadingFile(file.name);
+
+      if (isGroup) {
+        const groupId = id.replace('group:', '');
+        const storedKeys = JSON.parse(localStorage.getItem('ciphermesh_group_keys') || '{}');
+        const gk = storedKeys[groupId];
+        if (!gk) {
+          alert('No group key found.');
+          return;
+        }
+
+        const { encryptedPayload } = await encryptFile(file, gk, {
+          groupId,
+          senderId: identity.userId,
+        });
+
+        const localId = `local-${Date.now()}`;
+        const msgs = addMessage(conversationId, {
+          id: localId,
+          senderId: identity.userId,
+          text: encryptedPayload,
+          file: {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          },
+          timestamp: now,
+          status: 'sending',
+          isGroup: true,
+          ttl: ttl > 0 ? ttl : null,
+          expiresAt,
+          signatureVerified: true,
+        });
+        setMessages([...msgs]);
+
+        wsManager.send({
+          type: 'group_message',
+          group_id: groupId,
+          encrypted_payload: encryptedPayload,
+          nonce: 'file-blob',
+          signature: null,
+          ttl: ttl > 0 ? ttl : null,
+          privacy_mode: privacyMode,
+        });
+      } else if (contact) {
+        const { encryptedPayload } = await encryptFile(file, contact.public_key, {
+          conversationId,
+        });
+
+        const localId = `local-${Date.now()}`;
+        const msgs = addMessage(conversationId, {
+          id: localId,
+          senderId: identity.userId,
+          text: encryptedPayload,
+          file: {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          },
+          timestamp: now,
+          status: 'sending',
+          ttl: ttl > 0 ? ttl : null,
+          expiresAt,
+        });
+        setMessages([...msgs]);
+
+        wsManager.send({
+          type: 'message',
+          recipient_id: contactUserId,
+          encrypted_payload: encryptedPayload,
+          nonce: 'file-blob',
+          ephemeral_key: null,
+          ttl: ttl > 0 ? ttl : null,
+          privacy_mode: privacyMode,
+        });
+      }
+    } catch (err) {
+      console.error('[File] Upload failed:', err);
+      alert('File encryption failed: ' + err.message);
+    } finally {
+      setUploadingFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -451,6 +578,26 @@ export default function Chat() {
       </div>
 
       <div className="chat-input-bar glass-panel">
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          accept="image/*,video/*,.pdf,.doc,.docx,.txt,.zip"
+          style={{ display: 'none' }}
+        />
+        <button
+          className="btn btn-attach"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!!uploadingFile}
+          title="Send encrypted file"
+        >
+          📎
+        </button>
+        {uploadingFile && (
+          <span className="uploading-indicator">
+            🔒 Encrypting {uploadingFile}...
+          </span>
+        )}
         <input
           ref={inputRef}
           type="text"

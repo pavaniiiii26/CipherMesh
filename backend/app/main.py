@@ -143,3 +143,29 @@ async def health_check():
         "service": "CipherMesh Relay",
         "online_users": len(hub.get_online_users())
     }
+
+
+@app.get("/api/stats")
+async def relay_stats():
+    """Relay security statistics for the Crypto Dashboard."""
+    nonce_cache = hub.nonce_cache
+    rate_limiter = hub.rate_limiter
+
+    return {
+        "nonce_cache": {
+            "size": len(nonce_cache._nonces),
+            "window_seconds": nonce_cache.window,
+        },
+        "rate_limiter": {
+            "tracked_connections": len(rate_limiter._activity),
+            "max_messages_per_second": rate_limiter.max_rate,
+        },
+        "connections": {
+            "online_users": len(hub.get_online_users()),
+            "online_user_ids": hub.get_online_users(),
+        },
+        "relay": {
+            "version": "0.2.0-secure",
+            "architecture": "zero-knowledge",
+        }
+    }
