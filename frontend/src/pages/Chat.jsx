@@ -1,12 +1,35 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getIdentity, encryptMessage, decryptMessage } from '../crypto/keys';
-import { decryptGroupMessage, encryptGroupMessage } from '../crypto/groupCrypto';
+import {
+  getIdentity,
+  encryptMessageWithForwardSecrecy,
+  decryptMessageWithForwardSecrecy
+} from '../crypto/keys';
+import {
+  decryptGroupMessage,
+  encryptGroupMessage,
+  verifyGroupMessageSignature
+} from '../crypto/groupCrypto';
 import { getContact } from '../store/contacts';
-import { getMessages, addMessage } from '../store/messages';
+import {
+  getMessages,
+  addMessage,
+  markMessagesAsRead,
+  deleteMessage,
+  purgeExpiredMessages
+} from '../store/messages';
 import wsManager, { ConnectionState } from '../services/websocket';
 import ConnectionStatus from '../components/ConnectionStatus';
 import MessageBubble from '../components/MessageBubble';
+import SafetyNumberModal from '../components/SafetyNumberModal';
+
+const TTL_OPTIONS = [
+  { label: 'Off', value: 0 },
+  { label: '30s', value: 30 },
+  { label: '5m', value: 300 },
+  { label: '1h', value: 3600 },
+  { label: '24h', value: 86400 },
+];
 
 export default function Chat() {
   const { id } = useParams(); // contact user_id or group:<group_id>
@@ -14,6 +37,7 @@ export default function Chat() {
   const identity = getIdentity();
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const lastTypingRef = useRef(0);
 
   const isGroup = id.startsWith('group:');
   const conversationId = id;
@@ -24,31 +48,66 @@ export default function Chat() {
   const [connectionState, setConnectionState] = useState(ConnectionState.OFFLINE);
   const [contact, setContact] = useState(null);
   const [typing, setTyping] = useState(false);
-  const [groupKey, setGroupKey] = useState(null);
+  const [showSafetyModal, setShowSafetyModal] = useState(false);
 
-  // Load contact info and messages
+  // Settings: privacy toggles and default TTL
+  const getSettings = useCallback(() => {
+    try {
+      return JSON.parse(localStorage.getItem('ciphermesh_settings') || '{}');
+    } catch { return {}; }
+  }, []);
+
+  const [ttl, setTtl] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('ciphermesh_settings') || '{}');
+      return s.defaultTtl || 0;
+    } catch { return 0; }
+  });
+
+  // Load contact info and initial messages
   useEffect(() => {
     if (!isGroup && contactUserId) {
       const c = getContact(contactUserId);
       setContact(c);
     }
 
-    // Load group key from localStorage if group chat
-    if (isGroup) {
-      const groupId = id.replace('group:', '');
-      const storedKeys = JSON.parse(localStorage.getItem('ciphermesh_group_keys') || '{}');
-      setGroupKey(storedKeys[groupId] || null);
-    }
-
     setMessages(getMessages(conversationId));
   }, [conversationId, contactUserId, isGroup, id]);
+
+  // Periodic sweeper for disappearing messages
+  useEffect(() => {
+    const interval = setInterval(() => {
+      purgeExpiredMessages();
+      setMessages(getMessages(conversationId));
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [conversationId]);
+
+  // Mark messages as read and send read receipt if enabled
+  useEffect(() => {
+    const settings = getSettings();
+    if (messages.length > 0 && !isGroup && contactUserId) {
+      markMessagesAsRead(conversationId);
+      if (settings.sendReadReceipts !== false) {
+        const unreadIds = messages.filter(m => m.senderId === contactUserId).map(m => m.id);
+        if (unreadIds.length > 0) {
+          wsManager.send({
+            type: 'read_receipt',
+            sender_id: contactUserId,
+            conversation_id: conversationId,
+            message_ids: unreadIds,
+          });
+        }
+      }
+    }
+  }, [conversationId, contactUserId, isGroup, messages.length, getSettings]);
 
   // Subscribe to connection state
   useEffect(() => {
     return wsManager.onStateChange(setConnectionState);
   }, []);
 
-  // Listen for incoming messages
+  // Listen for incoming messages, read receipts, and typing
   useEffect(() => {
     const handleMessage = (data) => {
       if (!identity) return;
@@ -58,10 +117,12 @@ export default function Chat() {
         const senderContact = getContact(data.sender_id);
         if (!senderContact) return;
 
-        const plaintext = decryptMessage(
+        // Decrypt with forward secrecy ephemeral key or static key
+        const keyToUse = data.ephemeral_key || senderContact.public_key;
+        const plaintext = decryptMessageWithForwardSecrecy(
           data.encrypted_payload,
           data.nonce,
-          senderContact.public_key,
+          keyToUse,
           identity.secretKey
         );
 
@@ -72,8 +133,22 @@ export default function Chat() {
             text: plaintext,
             timestamp: data.timestamp,
             status: 'delivered',
+            nonce: data.nonce,
+            ttl: data.ttl,
+            expiresAt: data.expires_at,
           });
           setMessages([...msgs]);
+
+          // Send read receipt if enabled
+          const settings = getSettings();
+          if (settings.sendReadReceipts !== false) {
+            wsManager.send({
+              type: 'read_receipt',
+              sender_id: data.sender_id,
+              conversation_id: conversationId,
+              message_ids: [data.id],
+            });
+          }
         }
       }
     };
@@ -83,14 +158,28 @@ export default function Chat() {
       const groupId = id.replace('group:', '');
 
       if (data.type === 'group_message' && data.group_id === groupId) {
-        // Decrypt with group key
         const storedKeys = JSON.parse(localStorage.getItem('ciphermesh_group_keys') || '{}');
         const gk = storedKeys[groupId];
         if (!gk) return;
 
+        // Verify digital signature from sender's signing key
+        const senderContact = getContact(data.sender_id);
+        let signatureVerified = null;
+        if (data.signature && senderContact?.signing_public_key) {
+          signatureVerified = verifyGroupMessageSignature(
+            data.signature,
+            senderContact.signing_public_key,
+            {
+              groupId,
+              senderId: data.sender_id,
+              encrypted: data.encrypted_payload,
+              nonce: data.nonce,
+            }
+          );
+        }
+
         const plaintext = decryptGroupMessage(data.encrypted_payload, data.nonce, gk);
         if (plaintext) {
-          const senderContact = getContact(data.sender_id);
           const msgs = addMessage(conversationId, {
             id: data.id,
             senderId: data.sender_id,
@@ -99,9 +188,21 @@ export default function Chat() {
             timestamp: data.timestamp,
             status: 'delivered',
             isGroup: true,
+            nonce: data.nonce,
+            ttl: data.ttl,
+            expiresAt: data.expires_at,
+            signatureVerified,
           });
           setMessages([...msgs]);
         }
+      }
+    };
+
+    const handleReadReceipt = (data) => {
+      if (data.conversation_id === conversationId || data.reader_id === contactUserId) {
+        setMessages(prev => prev.map(m =>
+          m.senderId === identity?.userId ? { ...m, status: 'read' } : m
+        ));
       }
     };
 
@@ -114,25 +215,21 @@ export default function Chat() {
 
     const unsub1 = wsManager.on('message', handleMessage);
     const unsub2 = wsManager.on('group_message', handleGroupMessage);
-    const unsub3 = wsManager.on('typing', handleTyping);
+    const unsub3 = wsManager.on('read_receipt', handleReadReceipt);
+    const unsub4 = wsManager.on('typing', handleTyping);
 
     return () => {
       unsub1();
       unsub2();
       unsub3();
+      unsub4();
     };
-  }, [identity, contactUserId, conversationId, isGroup, id]);
+  }, [identity, contactUserId, conversationId, isGroup, id, getSettings]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  const getSettings = useCallback(() => {
-    try {
-      return JSON.parse(localStorage.getItem('ciphermesh_settings') || '{}');
-    } catch { return {}; }
-  }, []);
 
   const handleSend = () => {
     if (!input.trim() || !identity) return;
@@ -143,9 +240,11 @@ export default function Chat() {
 
     const settings = getSettings();
     const privacyMode = settings.privacyMode || 'direct';
+    const now = Date.now() / 1000;
+    const expiresAt = ttl > 0 ? (now + ttl) : null;
 
     if (isGroup) {
-      // Group message — encrypt with group symmetric key
+      // Group message with sender Ed25519 signature
       const groupId = id.replace('group:', '');
       const storedKeys = JSON.parse(localStorage.getItem('ciphermesh_group_keys') || '{}');
       const gk = storedKeys[groupId];
@@ -154,51 +253,64 @@ export default function Chat() {
         return;
       }
 
-      const { encrypted, nonce } = encryptGroupMessage(text, gk);
+      const { encrypted, nonce, signature } = encryptGroupMessage(
+        text,
+        gk,
+        identity.signingSecretKey,
+        { groupId, senderId: identity.userId }
+      );
 
-      // Add to local store immediately (optimistic)
       const localId = `local-${Date.now()}`;
       const msgs = addMessage(conversationId, {
         id: localId,
         senderId: identity.userId,
         text,
-        timestamp: Date.now() / 1000,
+        timestamp: now,
         status: 'sending',
         isGroup: true,
+        ttl: ttl > 0 ? ttl : null,
+        expiresAt,
+        signatureVerified: true,
       });
       setMessages([...msgs]);
 
-      // Send via WebSocket
       wsManager.send({
         type: 'group_message',
         group_id: groupId,
         encrypted_payload: encrypted,
         nonce,
+        signature,
+        ttl: ttl > 0 ? ttl : null,
         privacy_mode: privacyMode,
       });
     } else {
-      // 1:1 message — encrypt with recipient's public key
+      // 1:1 message with Ephemeral Forward Secrecy
       if (!contact) return;
 
-      const { encrypted, nonce } = encryptMessage(text, contact.public_key, identity.secretKey);
+      const { encrypted, nonce, ephemeralPublicKey } = encryptMessageWithForwardSecrecy(
+        text,
+        contact.public_key
+      );
 
-      // Add to local store immediately (optimistic)
       const localId = `local-${Date.now()}`;
       const msgs = addMessage(conversationId, {
         id: localId,
         senderId: identity.userId,
         text,
-        timestamp: Date.now() / 1000,
+        timestamp: now,
         status: 'sending',
+        ttl: ttl > 0 ? ttl : null,
+        expiresAt,
       });
       setMessages([...msgs]);
 
-      // Send via WebSocket
       wsManager.send({
         type: 'message',
         recipient_id: contactUserId,
         encrypted_payload: encrypted,
         nonce,
+        ephemeral_key: ephemeralPublicKey,
+        ttl: ttl > 0 ? ttl : null,
         privacy_mode: privacyMode,
       });
     }
@@ -208,7 +320,6 @@ export default function Chat() {
   useEffect(() => {
     const handleAck = (data) => {
       if (data.type === 'message_ack') {
-        // Update the latest sending message to sent/delivered
         setMessages(prev => prev.map(m =>
           m.status === 'sending'
             ? { ...m, status: data.status === 'delivered' ? 'delivered' : 'sent', id: data.id || m.id }
@@ -216,16 +327,28 @@ export default function Chat() {
         ));
       }
     };
-
     return wsManager.on('message_ack', handleAck);
   }, []);
 
   const handleTypingInput = (e) => {
     setInput(e.target.value);
-    // Send typing indicator (throttled)
-    if (contactUserId) {
-      wsManager.sendTyping(contactUserId);
+    const settings = getSettings();
+    if (settings.sendTyping === false) return;
+
+    const now = Date.now();
+    if (now - lastTypingRef.current > 2000) {
+      lastTypingRef.current = now;
+      if (contactUserId) {
+        wsManager.sendTyping(contactUserId);
+      } else if (isGroup) {
+        wsManager.sendTyping(null, id.replace('group:', ''));
+      }
     }
+  };
+
+  const handleDeleteMessage = (msgId) => {
+    const remaining = deleteMessage(conversationId, msgId);
+    setMessages([...remaining]);
   };
 
   const chatTitle = isGroup
@@ -235,21 +358,64 @@ export default function Chat() {
   return (
     <div className="page chat-page">
       <div className="chat-header glass-panel">
-        <button className="btn-icon back-btn" onClick={() => navigate(-1)}>
+        <button className="btn-icon back-btn" onClick={() => navigate(-1)} title="Back">
           ←
         </button>
+
         <div className="chat-header-info">
-          <h2>{chatTitle}</h2>
-          {!isGroup && contact && (
-            <span className={`header-status ${contact.online ? 'online' : 'offline'}`}>
-              {contact.online ? 'Online' : 'Offline'}
-            </span>
-          )}
-          {typing && <span className="typing-indicator">typing...</span>}
+          <div className="chat-title-row">
+            <h2>{chatTitle}</h2>
+            {!isGroup && contact?.verified && (
+              <span className="verified-shield-badge" title="Safety numbers verified">
+                🛡️ Verified
+              </span>
+            )}
+            {!isGroup && contact?.keyChanged && (
+              <span className="key-warning-badge" title="Public key was changed!">
+                ⚠️ Key Replaced
+              </span>
+            )}
+          </div>
+
+          <div className="chat-sub-status">
+            {!isGroup && contact && (
+              <span className={`header-status ${contact.online ? 'online' : 'offline'}`}>
+                {contact.online ? 'Online' : 'Offline'}
+              </span>
+            )}
+            {typing && <span className="typing-indicator">typing...</span>}
+          </div>
         </div>
+
         <div className="chat-header-actions">
-          <span className="encryption-badge" title="End-to-end encrypted">
-            🔒 E2E
+          {/* Disappearing Messages (TTL) dropdown */}
+          <div className="ttl-control" title="Disappearing messages timer">
+            <span className="ttl-icon">⏱️</span>
+            <select
+              value={ttl}
+              onChange={(e) => setTtl(Number(e.target.value))}
+              className="ttl-select"
+            >
+              {TTL_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {!isGroup && contact && (
+            <button
+              className={`btn btn-sm ${contact.verified ? 'btn-ghost' : 'btn-accent'}`}
+              onClick={() => setShowSafetyModal(true)}
+              title="Compare safety numbers for MITM protection"
+            >
+              {contact.verified ? '🛡️ Verified' : '🛡️ Verify Key'}
+            </button>
+          )}
+
+          <span className="encryption-badge" title="Forward secrecy enabled E2EE">
+            🔒 Forward Secrecy
           </span>
         </div>
       </div>
@@ -258,10 +424,18 @@ export default function Chat() {
 
       <div className="chat-messages">
         {messages.length === 0 ? (
-          <div className="empty-chat">
-            <div className="empty-icon">💬</div>
-            <p>No messages yet</p>
-            <p className="subtitle">Messages are end-to-end encrypted</p>
+          <div className="empty-chat glass-panel">
+            <div className="empty-icon">🛡️</div>
+            <h3>Zero-Knowledge End-to-End Encrypted</h3>
+            <p>
+              Messages sent in this chat are encrypted client-side with ephemeral forward secrecy.
+              The relay server only ever routes opaque ciphertext.
+            </p>
+            {ttl > 0 && (
+              <div className="ttl-notice-badge">
+                ⏱️ Disappearing messages active: {TTL_OPTIONS.find(o => o.value === ttl)?.label}
+              </div>
+            )}
           </div>
         ) : (
           messages.map((msg, i) => (
@@ -269,6 +443,7 @@ export default function Chat() {
               key={msg.id || i}
               message={msg}
               isOwn={msg.senderId === identity?.userId}
+              onDelete={handleDeleteMessage}
             />
           ))
         )}
@@ -282,17 +457,28 @@ export default function Chat() {
           value={input}
           onChange={handleTypingInput}
           onKeyDown={e => e.key === 'Enter' && handleSend()}
-          placeholder="Type a message..."
+          placeholder={ttl > 0 ? `Message (disappears in ${TTL_OPTIONS.find(o => o.value === ttl)?.label})...` : "Type an encrypted message..."}
           autoFocus
         />
         <button
           className="btn btn-send"
           onClick={handleSend}
           disabled={!input.trim()}
+          title="Send encrypted message"
         >
           ➤
         </button>
       </div>
+
+      {showSafetyModal && contact && (
+        <SafetyNumberModal
+          contact={contact}
+          onClose={() => setShowSafetyModal(false)}
+          onVerificationChange={(newStatus) => {
+            setContact(prev => ({ ...prev, verified: newStatus }));
+          }}
+        />
+      )}
     </div>
   );
 }

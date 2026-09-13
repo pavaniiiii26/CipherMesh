@@ -32,10 +32,15 @@ async function request(path, options = {}) {
 
 // ─── User Endpoints ───────────────────────────────────────────────
 
-export async function registerUser(userId, publicKey, displayName) {
+export async function registerUser(userId, publicKey, displayName, signingPublicKey = null) {
   return request('/users/register', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId, public_key: publicKey, display_name: displayName }),
+    body: JSON.stringify({
+      user_id: userId,
+      public_key: publicKey,
+      display_name: displayName,
+      signing_public_key: signingPublicKey,
+    }),
   });
 }
 

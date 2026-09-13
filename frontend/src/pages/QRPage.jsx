@@ -21,6 +21,7 @@ export default function QRPage() {
     const payload = JSON.stringify({
       user_id: identity.userId,
       public_key: identity.publicKey,
+      signing_public_key: identity.signingPublicKey,
       display_name: identity.displayName,
     }, null, 2);
 
@@ -40,11 +41,14 @@ export default function QRPage() {
 
     try {
       let contactData;
+      let source = 'manual_id';
       try {
         contactData = JSON.parse(scannedText.trim());
+        source = 'qr_scan';
       } catch {
         // Assume plain user_id and resolve via relay server
         contactData = await resolveContact(scannedText.trim());
+        source = 'manual_id';
       }
 
       if (!contactData.user_id || !contactData.public_key) {
@@ -55,7 +59,7 @@ export default function QRPage() {
         throw new Error("Cannot add your own identity as a contact");
       }
 
-      addContact(contactData);
+      addContact(contactData, source);
       wsManager.subscribePresence([contactData.user_id]);
       setMessage(`Contact "${contactData.display_name || contactData.user_id}" added successfully!`);
       setScannedText('');
