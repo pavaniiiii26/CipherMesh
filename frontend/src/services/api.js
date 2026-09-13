@@ -111,3 +111,9 @@ export async function acknowledgeMessages(userId, messageIds) {
 export async function healthCheck() {
   return request('/health');
 }
+
+// ─── Stats (Crypto Dashboard) ────────────────────────────────────
+
+export async function getRelayStats() {
+  return request('/stats');
+}

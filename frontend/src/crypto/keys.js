@@ -14,6 +14,7 @@
 
 import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64, encodeUTF8, decodeUTF8 } from 'tweetnacl-util';
+import { ratchetEncrypt, ratchetDecrypt } from './ratchet';
 
 const IDENTITY_STORAGE_KEY = 'ciphermesh_identity';
 
@@ -166,6 +167,7 @@ export function deleteIdentity() {
   localStorage.removeItem('ciphermesh_messages');
   localStorage.removeItem('ciphermesh_settings');
   localStorage.removeItem('ciphermesh_group_keys');
+  localStorage.removeItem('ciphermesh_ratchet_state');
 }
 
 /**
@@ -180,7 +182,18 @@ export function deleteIdentity() {
  * @param {string} recipientPublicKeyB64 - Recipient's static public key (base64)
  * @returns {{ encrypted: string, nonce: string, ephemeralPublicKey: string }}
  */
-export function encryptMessageWithForwardSecrecy(plaintext, recipientPublicKeyB64) {
+export function encryptMessageWithForwardSecrecy(plaintext, recipientPublicKeyB64, conversationId = null) {
+  // Try Double Ratchet first if we have a conversation ID
+  if (conversationId) {
+    try {
+      const drResult = ratchetEncrypt(plaintext, conversationId, recipientPublicKeyB64);
+      if (drResult) return drResult;
+    } catch (err) {
+      console.warn('[Ratchet] Encrypt failed, falling back to ephemeral:', err);
+    }
+  }
+
+  // Fallback: ephemeral X25519 per-message (original implementation)
   const recipientPubKey = decodeBase64(recipientPublicKeyB64);
   const ephemeralPair = nacl.box.keyPair();
   const messageBytes = decodeUTF8(plaintext);
@@ -213,7 +226,18 @@ export function encryptMessageWithForwardSecrecy(plaintext, recipientPublicKeyB6
  * @param {string} recipientSecretKeyB64 - Recipient's static secret key (base64)
  * @returns {string|null} Decrypted plaintext, or null on failure
  */
-export function decryptMessageWithForwardSecrecy(encryptedB64, nonceB64, senderKeyB64, recipientSecretKeyB64) {
+export function decryptMessageWithForwardSecrecy(encryptedB64, nonceB64, senderKeyB64, recipientSecretKeyB64, conversationId = null) {
+  // Try Double Ratchet first if we have a conversation ID
+  if (conversationId) {
+    try {
+      const drResult = ratchetDecrypt(encryptedB64, nonceB64, senderKeyB64, conversationId, recipientSecretKeyB64);
+      if (drResult) return drResult;
+    } catch (err) {
+      console.warn('[Ratchet] Decrypt failed, falling back to static:', err);
+    }
+  }
+
+  // Fallback: static nacl.box decryption
   try {
     const encrypted = decodeBase64(encryptedB64);
     const nonce = decodeBase64(nonceB64);
@@ -237,7 +261,17 @@ export function decryptMessageWithForwardSecrecy(encryptedB64, nonceB64, senderK
 /**
  * Standard nacl.box encrypt (backward compatible fallback).
  */
-export function encryptMessage(plaintext, recipientPublicKeyB64, senderSecretKeyB64) {
+export function encryptMessage(plaintext, recipientPublicKeyB64, senderSecretKeyB64, conversationId = null) {
+  // Use Double Ratchet if conversation state exists or we're starting fresh
+  if (conversationId) {
+    try {
+      return ratchetEncrypt(plaintext, conversationId, recipientPublicKeyB64);
+    } catch (err) {
+      console.warn('[Ratchet] Encryption failed, falling back to static:', err);
+    }
+  }
+
+  // Fallback: static nacl.box encryption
   const recipientPubKey = decodeBase64(recipientPublicKeyB64);
   const senderSecKey = decodeBase64(senderSecretKeyB64);
   const messageBytes = decodeUTF8(plaintext);
@@ -258,8 +292,8 @@ export function encryptMessage(plaintext, recipientPublicKeyB64, senderSecretKey
 /**
  * Standard nacl.box decrypt (backward compatible fallback).
  */
-export function decryptMessage(encryptedB64, nonceB64, senderPublicKeyB64, recipientSecretKeyB64) {
-  return decryptMessageWithForwardSecrecy(encryptedB64, nonceB64, senderPublicKeyB64, recipientSecretKeyB64);
+export function decryptMessage(encryptedB64, nonceB64, senderPublicKeyB64, recipientSecretKeyB64, conversationId = null) {
+  return decryptMessageWithForwardSecrecy(encryptedB64, nonceB64, senderPublicKeyB64, recipientSecretKeyB64, conversationId);
 }
 
 /**

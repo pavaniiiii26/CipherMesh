@@ -146,6 +146,7 @@ export default function Settings() {
       deleteIdentity();
       localStorage.removeItem(SETTINGS_STORAGE_KEY);
       localStorage.removeItem('ciphermesh_group_keys');
+      localStorage.removeItem('ciphermesh_ratchet_state');
       navigate('/');
       window.location.reload();
     }

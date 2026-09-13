@@ -27,6 +27,9 @@ export default function Navbar({ connectionState }) {
         <NavLink to="/qr" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           📸 QR Code
         </NavLink>
+        <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          🔐 Dashboard
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           ⚙️ Settings
         </NavLink>
