@@ -25,12 +25,9 @@ class ResolveRequest(BaseModel):
 @router.post("/resolve")
 async def resolve_contact(req: ResolveRequest):
     """
-    Given a user_id (from a QR code scan), return the user's public key
-    and display name so the client can add them as a contact.
-
-    PRODUCTION: Consider adding a verification step — the resolver should
-    confirm out-of-band that the public key matches expectations (e.g.,
-    comparing safety numbers in person).
+    Given a user_id (from a QR code scan or manual entry), return the user's
+    public key, signing key, and display name so the client can establish
+    verified E2EE communication.
     """
     user = await db.get_user(req.user_id)
     if not user:
@@ -38,5 +35,6 @@ async def resolve_contact(req: ResolveRequest):
     return {
         "user_id": user["user_id"],
         "public_key": user["public_key"],
+        "signing_public_key": user.get("signing_public_key"),
         "display_name": user["display_name"]
     }

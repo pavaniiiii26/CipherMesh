@@ -24,24 +24,28 @@ class RegisterRequest(BaseModel):
     user_id: str
     public_key: str
     display_name: str = "Anonymous"
+    signing_public_key: str | None = None
 
 
 class RegisterResponse(BaseModel):
     user_id: str
     public_key: str
     display_name: str
+    signing_public_key: str | None = None
 
 
 @router.post("/register", response_model=RegisterResponse)
 async def register_user(req: RegisterRequest):
     """
-    Register a new user by storing their public key.
+    Register a new user by storing their public keys.
 
-    The client generates a keypair locally and sends only the public key here.
+    The client generates keypairs locally and sends only public keys here.
     The user_id is derived from the public key fingerprint on the client side.
-
-    PRODUCTION: Verify that user_id == hash(public_key) server-side.
     """
+    # Sanitize display_name (prevent XSS and excessive length)
+    cleaned_name = req.display_name.strip()[:32] or "Anonymous"
+    cleaned_name = cleaned_name.replace("<", "&lt;").replace(">", "&gt;")
+
     # Check if user already exists
     existing = await db.get_user(req.user_id)
     if existing:
@@ -53,7 +57,12 @@ async def register_user(req: RegisterRequest):
     if existing_by_key:
         return RegisterResponse(**existing_by_key)
 
-    user = await db.create_user(req.user_id, req.public_key, req.display_name)
+    user = await db.create_user(
+        user_id=req.user_id,
+        public_key=req.public_key,
+        display_name=cleaned_name,
+        signing_public_key=req.signing_public_key
+    )
     return RegisterResponse(**user)
 
 

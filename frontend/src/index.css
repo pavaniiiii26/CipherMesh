@@ -35,6 +35,54 @@
   padding: 0;
 }
 
+/* ─── Keyframes ─────────────────────────────────────────────────── */
+@keyframes ambientDrift1 {
+  0%   { transform: translate(0, 0) scale(1); }
+  33%  { transform: translate(18px, -12px) scale(1.04); }
+  66%  { transform: translate(-10px, 14px) scale(0.97); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes ambientDrift2 {
+  0%   { transform: translate(0, 0) scale(1); }
+  40%  { transform: translate(-14px, 10px) scale(1.03); }
+  80%  { transform: translate(12px, -8px) scale(0.98); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes appEntrance {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes headerEntrance {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)  scale(1); }
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)  scale(1); }
+}
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes glassFloat {
+  0%   { transform: translateY(0px); }
+  50%  { transform: translateY(-2px); }
+  100% { transform: translateY(0px); }
+}
+@keyframes presencePulse {
+  0%   { box-shadow: 0 0 0   0   rgba(16, 185, 129, 0.6); }
+  70%  { box-shadow: 0 0 0   5px rgba(16, 185, 129, 0);   }
+  100% { box-shadow: 0 0 0   0   rgba(16, 185, 129, 0);   }
+}
+@keyframes ttlGlow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
@@ -42,10 +90,9 @@ body {
   min-height: 100vh;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  background-image: 
-    radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.04) 0%, transparent 40%),
-    radial-gradient(circle at 85% 85%, rgba(139, 92, 246, 0.05) 0%, transparent 40%);
-  background-attachment: fixed;
+  overflow-x: hidden;
+  /* Ambient layered pseudo-background achieved via ::before / ::after on app-container */
+  scroll-behavior: smooth;
 }
 
 /* Typography utilities */
@@ -73,11 +120,44 @@ body {
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
-/* App Container Layout */
+/* ─── App Container with Ambient Background ─────────────────────── */
 .app-container {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  animation: appEntrance 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Two slowly drifting ambient light blobs */
+.app-container::before,
+.app-container::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(90px);
+  will-change: transform;
+}
+
+.app-container::before {
+  width: 480px;
+  height: 480px;
+  background: radial-gradient(circle, rgba(0, 240, 255, 0.055) 0%, transparent 70%);
+  top: -80px;
+  left: -80px;
+  animation: ambientDrift1 14s ease-in-out infinite;
+}
+
+.app-container::after {
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, transparent 70%);
+  bottom: -100px;
+  right: -100px;
+  animation: ambientDrift2 11s ease-in-out infinite;
 }
 
 .main-content {
@@ -86,9 +166,12 @@ body {
   width: 100%;
   margin: 0 auto;
   padding: 1.5rem 1rem;
+  position: relative;
+  z-index: 1;
+  animation: appEntrance 0.65s 0.05s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Header & Navbar */
+/* ─── Header & Navbar ───────────────────────────────────────────── */
 .app-header {
   display: flex;
   align-items: center;
@@ -96,6 +179,10 @@ body {
   padding: 0.75rem 1.5rem;
   margin: 1rem 1rem 0;
   border-radius: var(--radius-lg);
+  position: relative;
+  z-index: 10;
+  animation: headerEntrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: box-shadow 0.3s ease;
 }
 
 .brand {
@@ -144,18 +231,22 @@ body {
   font-weight: 500;
   padding: 0.4rem 0.8rem;
   border-radius: var(--radius-sm);
-  transition: all 0.2s ease;
+  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  will-change: transform;
 }
 
 .nav-link:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.06);
 }
 
 .nav-link.active {
   color: var(--accent-cyan);
   background: rgba(0, 240, 255, 0.1);
   border: 1px solid rgba(0, 240, 255, 0.2);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.08);
 }
 
 .identity-pill {
@@ -202,7 +293,7 @@ body {
   background: var(--accent-red);
 }
 
-/* Buttons */
+/* ─── Buttons ───────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -214,8 +305,13 @@ body {
   border-radius: var(--radius-sm);
   border: none;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, opacity 0.15s ease;
   font-family: var(--font-sans);
+  will-change: transform;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97) translateY(1px);
 }
 
 .btn-primary {
@@ -315,13 +411,13 @@ input[type="text"], textarea {
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 0.95rem;
-  transition: all 0.2s ease;
+  transition: border-color 0.18s ease, box-shadow 0.22s ease;
 }
 
 input[type="text"]:focus, textarea:focus {
   outline: none;
-  border-color: var(--accent-cyan);
-  box-shadow: 0 0 0 2px var(--accent-cyan-glow);
+  border-color: rgba(0, 240, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.12), 0 0 16px rgba(0, 240, 255, 0.06);
 }
 
 textarea {
@@ -434,12 +530,15 @@ textarea {
   line-height: 1.4;
   word-break: break-word;
   position: relative;
-  animation: fadeIn 0.2s ease-out;
+  animation: msgIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: box-shadow 0.2s ease;
+  will-change: transform, opacity;
 }
 
+/* Legacy alias still used by modal-backdrop */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .message-bubble.own {
@@ -481,6 +580,13 @@ textarea {
   gap: 0.5rem;
   padding: 0.6rem 0.8rem;
   margin-top: 0.5rem;
+  transition: box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+/* Composer glow when focused-within */
+.chat-input-bar:focus-within {
+  border-color: rgba(0, 240, 255, 0.35) !important;
+  box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.10), 0 0 20px rgba(0, 240, 255, 0.05);
 }
 
 .chat-input-bar input {
@@ -505,6 +611,18 @@ textarea {
   padding: 0;
   flex-shrink: 0;
   font-size: 1.1rem;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+  will-change: transform;
+}
+
+.btn-send:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 240, 255, 0.4);
+}
+
+.btn-send:active:not(:disabled) {
+  transform: scale(0.93) translateY(1px);
+  box-shadow: none;
 }
 
 /* Contacts & Groups list */
@@ -542,13 +660,20 @@ textarea {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  will-change: transform;
 }
 
 .contact-item:hover {
   background: var(--bg-card-hover);
-  border-color: rgba(0, 240, 255, 0.2);
-  transform: translateX(3px);
+  border-color: rgba(0, 240, 255, 0.18);
+  transform: translateX(2px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25), -2px 0 12px rgba(0, 240, 255, 0.04);
+}
+
+.contact-item.active {
+  border-color: rgba(0, 240, 255, 0.28);
+  background: rgba(0, 240, 255, 0.06);
 }
 
 .contact-avatar {
@@ -574,11 +699,13 @@ textarea {
   position: absolute;
   bottom: 0;
   right: 0;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
 .presence-dot.online {
   background: var(--accent-green);
   box-shadow: 0 0 6px var(--accent-green);
+  animation: presencePulse 3s ease-out infinite;
 }
 
 .presence-dot.offline {
@@ -626,6 +753,19 @@ textarea {
   opacity: 0.7;
 }
 
+/* ─── Glass Panel ambient float (very subtle) ───────────────────── */
+.glass-panel {
+  animation: glassFloat 7s ease-in-out infinite;
+}
+
+/* Don't float structural panels like headers and chat containers */
+.app-header.glass-panel,
+.chat-header.glass-panel,
+.modal-card.glass-panel,
+.chat-input-bar.glass-panel {
+  animation: none;
+}
+
 /* Privacy Mode Selector */
 .privacy-modes {
   display: flex;
@@ -645,11 +785,13 @@ textarea {
   cursor: pointer;
   text-align: left;
   color: var(--text-primary);
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  will-change: transform;
 }
 
 .privacy-mode-option:hover {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
 }
 
 .privacy-mode-option.active {
@@ -833,12 +975,14 @@ textarea {
   padding: 1.25rem;
   margin-bottom: 0.75rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.22s ease, border-color 0.22s ease, transform 0.22s ease, box-shadow 0.22s ease;
+  will-change: transform;
 }
 
 .group-card:hover {
-  border-color: rgba(0, 240, 255, 0.3);
+  border-color: rgba(0, 240, 255, 0.28);
   transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
 }
 
 .group-card-header {
@@ -868,4 +1012,461 @@ textarea {
 
 .action-hint {
   color: var(--accent-cyan);
+}
+
+/* ─── Modal Dialogs ─────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 15, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1rem;
+  animation: backdropIn 0.22s ease-out both;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 520px;
+  background: rgba(13, 20, 36, 0.95);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: var(--radius-lg);
+  padding: 1.75rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 240, 255, 0.1);
+  animation: modalIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 0.04s;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.modal-title-row h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.modal-subtitle {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin-bottom: 1.25rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+/* ─── Safety Numbers Display ─────────────────────────────────────── */
+.safety-number-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  background: rgba(5, 10, 20, 0.6);
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.safety-qr-box {
+  background: #0b0f19;
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+}
+
+.safety-digits-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.digit-block {
+  background: rgba(0, 240, 255, 0.06);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.25rem;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #00f0ff;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+}
+
+.safety-explanation {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+}
+
+/* ─── TTL & Disappearing Messages ───────────────────────────────── */
+.ttl-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+}
+
+.ttl-icon {
+  font-size: 0.85rem;
+}
+
+.ttl-select {
+  background: transparent;
+  color: var(--text-primary);
+  border: none;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+}
+
+.ttl-select option {
+  background: #0b0f19;
+  color: #fff;
+}
+
+.message-ttl {
+  font-size: 0.7rem;
+  color: #f59e0b;
+  font-weight: 600;
+  margin-right: 0.35rem;
+  letter-spacing: 0.02em;
+  animation: ttlGlow 4s ease-in-out infinite;
+}
+
+.ttl-notice-badge {
+  display: inline-block;
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.15);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* ─── Signatures & Verification Badges ──────────────────────────── */
+.signature-badge {
+  font-size: 0.68rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 0.4rem;
+  font-weight: 600;
+}
+
+.signature-badge.verified {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.signature-badge.warning {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.verified-shield-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(0, 240, 255, 0.15);
+  color: #00f0ff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 240, 255, 0.3);
+}
+
+.key-warning-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  animation: pulse 2s infinite;
+}
+
+.chat-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ─── Contact Audit Meta & Verification ─────────────────────────── */
+.contact-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.badge-shield {
+  font-size: 0.85rem;
+}
+
+.contact-audit-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 2px;
+}
+
+.contact-added-text {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.contact-trailing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.btn-verify-icon {
+  background: rgba(0, 240, 255, 0.1);
+  color: #00f0ff;
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-verify-icon.verified {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.btn-verify-icon:hover {
+  filter: brightness(1.2);
+  transform: translateY(-1px);
+  transition: transform 0.18s ease, filter 0.18s ease;
+}
+
+/* ─── Notice & Disclaimer Boxes ─────────────────────────────────── */
+.notice-box {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  background: rgba(0, 240, 255, 0.05);
+  border-left: 3px solid #00f0ff;
+}
+
+.notice-icon {
+  font-size: 1.6rem;
+}
+
+.notice-content h4 {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.95rem;
+  color: #00f0ff;
+}
+
+.notice-content p {
+  margin: 0;
+  font-size: 0.825rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+/* ─── Privacy Toggles & Settings ────────────────────────────────── */
+.settings-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.toggle-info {
+  flex: 1;
+  padding-right: 1.5rem;
+}
+
+.toggle-title {
+  display: block;
+  font-weight: 600;
+  font-size: 0.925rem;
+  color: var(--text-primary);
+  margin-bottom: 0.2rem;
+}
+
+.toggle-desc {
+  display: block;
+  font-size: 0.785rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: rgba(255, 255, 255, 0.15);
+  transition: 0.3s;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #00f0ff;
+  border-color: #00f0ff;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+  background-color: #0b0f19;
+}
+
+/* Read receipts tick color */
+.message-status.read {
+  color: #00f0ff;
+  text-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
+}
+
+.message-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  margin-left: 0.35rem;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.message-bubble:hover .message-delete-btn {
+  opacity: 0.7;
+}
+
+.message-delete-btn:hover {
+  color: #ef4444 !important;
+  opacity: 1 !important;
+}
+
+.btn-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.btn-row.centered {
+  justify-content: center;
+}
+
+.btn-sm {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.mt-2 { margin-top: 0.5rem; }
+.mt-3 { margin-top: 0.75rem; }
+
+/* ─── Reduced Motion: Respect OS preference ──────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  /* Kill all ambient/floating animations */
+  .app-container::before,
+  .app-container::after {
+    animation: none;
+  }
+  .glass-panel {
+    animation: none;
+  }
+  .presence-dot.online {
+    animation: none;
+  }
+  .message-ttl {
+    animation: none;
+  }
+  /* Keep only essential opacity/transform transitions but make them instant */
+  .app-container,
+  .main-content,
+  .app-header,
+  .modal-backdrop,
+  .modal-card {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  /* Shorten all transitions to near-instant */
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

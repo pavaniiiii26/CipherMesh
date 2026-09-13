@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { getIdentity, decryptMessage } from './crypto/keys';
-import { decryptGroupMessage } from './crypto/groupCrypto';
+import { getIdentity, decryptMessageWithForwardSecrecy } from './crypto/keys';
+import { decryptGroupMessage, verifyGroupMessageSignature } from './crypto/groupCrypto';
 import { getContact } from './store/contacts';
 import { addMessage } from './store/messages';
 import wsManager, { ConnectionState } from './services/websocket';
@@ -41,10 +41,11 @@ export default function App() {
         return;
       }
 
-      const plaintext = decryptMessage(
+      const keyToUse = data.ephemeral_key || senderContact.public_key;
+      const plaintext = decryptMessageWithForwardSecrecy(
         data.encrypted_payload,
         data.nonce,
-        senderContact.public_key,
+        keyToUse,
         identity.secretKey
       );
 
@@ -55,6 +56,9 @@ export default function App() {
           text: plaintext,
           timestamp: data.timestamp,
           status: 'delivered',
+          nonce: data.nonce,
+          ttl: data.ttl,
+          expiresAt: data.expires_at,
         });
       }
     });
@@ -65,9 +69,23 @@ export default function App() {
       const groupKey = storedKeys[data.group_id];
       if (!groupKey) return;
 
+      const senderContact = getContact(data.sender_id);
+      let signatureVerified = null;
+      if (data.signature && senderContact?.signing_public_key) {
+        signatureVerified = verifyGroupMessageSignature(
+          data.signature,
+          senderContact.signing_public_key,
+          {
+            groupId: data.group_id,
+            senderId: data.sender_id,
+            encrypted: data.encrypted_payload,
+            nonce: data.nonce,
+          }
+        );
+      }
+
       const plaintext = decryptGroupMessage(data.encrypted_payload, data.nonce, groupKey);
       if (plaintext) {
-        const senderContact = getContact(data.sender_id);
         addMessage(`group:${data.group_id}`, {
           id: data.id,
           senderId: data.sender_id,
@@ -76,6 +94,10 @@ export default function App() {
           timestamp: data.timestamp,
           status: 'delivered',
           isGroup: true,
+          nonce: data.nonce,
+          ttl: data.ttl,
+          expiresAt: data.expires_at,
+          signatureVerified,
         });
       }
     });
@@ -101,6 +123,9 @@ export default function App() {
                       timestamp: msg.timestamp,
                       status: 'delivered',
                       isGroup: true,
+                      nonce: msg.nonce,
+                      ttl: msg.ttl,
+                      expiresAt: msg.expires_at,
                     });
                     deliveredIds.push(msg.id);
                   }
@@ -108,10 +133,11 @@ export default function App() {
               } else {
                 const senderContact = getContact(msg.sender_id);
                 if (senderContact) {
-                  const plain = decryptMessage(
+                  const keyToUse = msg.ephemeral_key || senderContact.public_key;
+                  const plain = decryptMessageWithForwardSecrecy(
                     msg.encrypted_payload,
                     msg.nonce,
-                    senderContact.public_key,
+                    keyToUse,
                     identity.secretKey
                   );
                   if (plain) {
@@ -121,6 +147,9 @@ export default function App() {
                       text: plain,
                       timestamp: msg.timestamp,
                       status: 'delivered',
+                      nonce: msg.nonce,
+                      ttl: msg.ttl,
+                      expiresAt: msg.expires_at,
                     });
                     deliveredIds.push(msg.id);
                   }

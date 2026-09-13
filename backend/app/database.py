@@ -28,7 +28,7 @@ async def get_db():
 
 
 async def init_db():
-    """Create tables if they don't exist. Called once at app startup."""
+    """Create tables if they don't exist and run non-destructive schema migrations."""
     db = await get_db()
     try:
         await db.executescript("""
@@ -36,6 +36,7 @@ async def init_db():
                 user_id TEXT PRIMARY KEY,
                 public_key TEXT NOT NULL UNIQUE,
                 display_name TEXT NOT NULL DEFAULT 'Anonymous',
+                signing_public_key TEXT,
                 created_at REAL NOT NULL
             );
 
@@ -49,6 +50,10 @@ async def init_db():
                 timestamp REAL NOT NULL,
                 delivered INTEGER NOT NULL DEFAULT 0,
                 privacy_mode TEXT NOT NULL DEFAULT 'direct',
+                ephemeral_key TEXT,
+                signature TEXT,
+                ttl INTEGER,
+                expires_at REAL,
                 FOREIGN KEY (sender_id) REFERENCES users(user_id)
             );
 
@@ -57,6 +62,9 @@ async def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_messages_group
                 ON messages(group_id, timestamp);
+
+            CREATE INDEX IF NOT EXISTS idx_messages_expires
+                ON messages(expires_at);
 
             CREATE TABLE IF NOT EXISTS groups_ (
                 group_id TEXT PRIMARY KEY,
@@ -78,21 +86,46 @@ async def init_db():
             );
         """)
         await db.commit()
+
+        # Non-destructive migrations for existing sqlite databases
+        migrations = [
+            ("users", "signing_public_key", "ALTER TABLE users ADD COLUMN signing_public_key TEXT"),
+            ("messages", "ephemeral_key", "ALTER TABLE messages ADD COLUMN ephemeral_key TEXT"),
+            ("messages", "signature", "ALTER TABLE messages ADD COLUMN signature TEXT"),
+            ("messages", "ttl", "ALTER TABLE messages ADD COLUMN ttl INTEGER"),
+            ("messages", "expires_at", "ALTER TABLE messages ADD COLUMN expires_at REAL"),
+        ]
+        for table, col, stmt in migrations:
+            try:
+                cursor = await db.execute(f"PRAGMA table_info({table})")
+                cols = [row["name"] for row in await cursor.fetchall()]
+                if col not in cols:
+                    await db.execute(stmt)
+                    await db.commit()
+            except Exception as e:
+                print(f"[DB Migration Note] {table}.{col}: {e}")
+
     finally:
         await db.close()
 
 
 # ─── User Operations ───────────────────────────────────────────────
 
-async def create_user(user_id: str, public_key: str, display_name: str) -> dict:
+async def create_user(user_id: str, public_key: str, display_name: str, signing_public_key: str = None) -> dict:
     db = await get_db()
     try:
         await db.execute(
-            "INSERT INTO users (user_id, public_key, display_name, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, public_key, display_name, time.time())
+            """INSERT INTO users (user_id, public_key, display_name, signing_public_key, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, public_key, display_name, signing_public_key, time.time())
         )
         await db.commit()
-        return {"user_id": user_id, "public_key": public_key, "display_name": display_name}
+        return {
+            "user_id": user_id,
+            "public_key": public_key,
+            "display_name": display_name,
+            "signing_public_key": signing_public_key
+        }
     finally:
         await db.close()
 
@@ -101,7 +134,7 @@ async def get_user(user_id: str) -> dict | None:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT user_id, public_key, display_name, created_at FROM users WHERE user_id = ?",
+            "SELECT user_id, public_key, display_name, signing_public_key, created_at FROM users WHERE user_id = ?",
             (user_id,)
         )
         row = await cursor.fetchone()
@@ -116,7 +149,7 @@ async def get_user_by_public_key(public_key: str) -> dict | None:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "SELECT user_id, public_key, display_name, created_at FROM users WHERE public_key = ?",
+            "SELECT user_id, public_key, display_name, signing_public_key, created_at FROM users WHERE public_key = ?",
             (public_key,)
         )
         row = await cursor.fetchone()
@@ -130,15 +163,24 @@ async def get_user_by_public_key(public_key: str) -> dict | None:
 # ─── Message Operations ────────────────────────────────────────────
 
 async def store_message(sender_id: str, recipient_id: str, encrypted_payload: str,
-                        nonce: str, group_id: str = None, privacy_mode: str = "direct") -> int:
+                        nonce: str, group_id: str = None, privacy_mode: str = "direct",
+                        ephemeral_key: str = None, signature: str = None,
+                        ttl: int = None, expires_at: float = None) -> int:
     """Store an encrypted message blob. The server CANNOT read this content."""
     db = await get_db()
     try:
+        now = time.time()
+        calculated_expires = expires_at
+        if ttl and not calculated_expires:
+            calculated_expires = now + ttl
+
         cursor = await db.execute(
             """INSERT INTO messages
-               (sender_id, recipient_id, group_id, encrypted_payload, nonce, timestamp, delivered, privacy_mode)
-               VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
-            (sender_id, recipient_id, group_id, encrypted_payload, nonce, time.time(), privacy_mode)
+               (sender_id, recipient_id, group_id, encrypted_payload, nonce, timestamp,
+                delivered, privacy_mode, ephemeral_key, signature, ttl, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+            (sender_id, recipient_id, group_id, encrypted_payload, nonce, now,
+             privacy_mode, ephemeral_key, signature, ttl, calculated_expires)
         )
         await db.commit()
         return cursor.lastrowid
@@ -146,16 +188,34 @@ async def store_message(sender_id: str, recipient_id: str, encrypted_payload: st
         await db.close()
 
 
-async def get_pending_messages(user_id: str) -> list[dict]:
-    """Fetch all undelivered encrypted messages for a user (polling fallback)."""
+async def cleanup_expired_messages() -> int:
+    """Purge all expired disappearing messages across the relay database."""
     db = await get_db()
     try:
+        now = time.time()
         cursor = await db.execute(
-            """SELECT id, sender_id, recipient_id, group_id, encrypted_payload, nonce, timestamp, privacy_mode
+            "DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at < ?",
+            (now,)
+        )
+        await db.commit()
+        return cursor.rowcount
+    finally:
+        await db.close()
+
+
+async def get_pending_messages(user_id: str) -> list[dict]:
+    """Fetch all undelivered unexpired encrypted messages for a user (polling fallback)."""
+    db = await get_db()
+    try:
+        now = time.time()
+        cursor = await db.execute(
+            """SELECT id, sender_id, recipient_id, group_id, encrypted_payload, nonce,
+                      timestamp, privacy_mode, ephemeral_key, signature, ttl, expires_at
                FROM messages
                WHERE recipient_id = ? AND delivered = 0
+                 AND (expires_at IS NULL OR expires_at > ?)
                ORDER BY timestamp ASC""",
-            (user_id,)
+            (user_id, now)
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]

@@ -25,6 +25,45 @@ from fastapi import WebSocket, WebSocketDisconnect
 from app import database as db
 
 
+class SeenNoncesCache:
+    """Tracks seen cryptographic nonces to prevent replay attacks."""
+
+    def __init__(self, window_seconds: float = 600.0):
+        self.window = window_seconds
+        self._nonces: dict[str, float] = {}
+
+    def is_replay_or_record(self, nonce: str) -> bool:
+        """Returns True if the nonce was already observed within the sliding window."""
+        now = time.time()
+        # Periodically purge expired nonces
+        if len(self._nonces) > 2000:
+            self._nonces = {k: ts for k, ts in self._nonces.items() if now - ts < self.window}
+
+        if nonce in self._nonces:
+            if now - self._nonces[nonce] < self.window:
+                return True
+
+        self._nonces[nonce] = now
+        return False
+
+
+class ConnectionRateLimiter:
+    """Sliding window rate limiter to prevent flooding."""
+
+    def __init__(self, max_messages_per_second: int = 15):
+        self.max_rate = max_messages_per_second
+        self._activity: dict[str, list[float]] = {}
+
+    def is_rate_limited(self, user_id: str) -> bool:
+        now = time.time()
+        timestamps = self._activity.setdefault(user_id, [])
+        self._activity[user_id] = [t for t in timestamps if now - t < 1.0]
+        if len(self._activity[user_id]) >= self.max_rate:
+            return True
+        self._activity[user_id].append(now)
+        return False
+
+
 class ConnectionManager:
     """Manages active WebSocket connections and message relay."""
 
@@ -33,6 +72,8 @@ class ConnectionManager:
         self.active_connections: dict[str, WebSocket] = {}
         # user_id -> set of user_ids who want presence updates
         self.presence_subscribers: dict[str, set[str]] = {}
+        self.nonce_cache = SeenNoncesCache(window_seconds=600.0)
+        self.rate_limiter = ConnectionRateLimiter(max_messages_per_second=15)
 
     async def connect(self, websocket: WebSocket, user_id: str):
         """Accept a WebSocket connection and register the user."""
@@ -60,29 +101,25 @@ class ConnectionManager:
         """
         Route an incoming message envelope from a connected client.
 
-        Expected envelope format:
-        {
-            "type": "message" | "presence_subscribe" | "typing" | "group_message",
-            "recipient_id": "...",       # for 1:1 messages
-            "group_id": "...",           # for group messages
-            "encrypted_payload": "...",  # base64-encoded encrypted blob
-            "nonce": "...",              # base64-encoded nonce
-            "privacy_mode": "direct" | "relay" | "anonymous"
-        }
-
         The server does NOT decrypt encrypted_payload. It's an opaque blob.
         """
+        # Connection rate limiting check
+        if self.rate_limiter.is_rate_limited(sender_id):
+            await self._send_to_user(sender_id, {
+                "type": "error",
+                "message": "Rate limit exceeded: too many messages per second. Slow down."
+            })
+            return
+
         msg_type = data.get("type", "message")
 
         if msg_type == "presence_subscribe":
-            # Client wants presence updates for a list of user_ids
             contact_ids = data.get("contact_ids", [])
             for cid in contact_ids:
                 if cid not in self.presence_subscribers:
                     self.presence_subscribers[cid] = set()
                 self.presence_subscribers[cid].add(sender_id)
 
-            # Send back current presence state for requested contacts
             presence_states = {
                 cid: "online" if self.is_online(cid) else "offline"
                 for cid in contact_ids
@@ -94,7 +131,6 @@ class ConnectionManager:
             return
 
         if msg_type == "typing":
-            # Relay typing indicator (not encrypted, just metadata)
             recipient_id = data.get("recipient_id")
             if recipient_id and self.is_online(recipient_id):
                 await self._send_to_user(recipient_id, {
@@ -103,6 +139,28 @@ class ConnectionManager:
                     "group_id": data.get("group_id")
                 })
             return
+
+        if msg_type == "read_receipt":
+            # Relay read receipt metadata to original message sender
+            target_sender_id = data.get("sender_id")
+            if target_sender_id and self.is_online(target_sender_id):
+                await self._send_to_user(target_sender_id, {
+                    "type": "read_receipt",
+                    "reader_id": sender_id,
+                    "conversation_id": data.get("conversation_id"),
+                    "message_ids": data.get("message_ids", [])
+                })
+            return
+
+        # Check nonce for replay protection on message deliveries
+        nonce = data.get("nonce")
+        if nonce:
+            if self.nonce_cache.is_replay_or_record(nonce):
+                await self._send_to_user(sender_id, {
+                    "type": "error",
+                    "message": "Replay attack detected: duplicate nonce rejected"
+                })
+                return
 
         if msg_type == "group_message":
             await self._handle_group_message(sender_id, data)
@@ -117,6 +175,11 @@ class ConnectionManager:
         encrypted_payload = data.get("encrypted_payload")
         nonce = data.get("nonce")
         privacy_mode = data.get("privacy_mode", "direct")
+        ephemeral_key = data.get("ephemeral_key")
+        signature = data.get("signature")
+        ttl = data.get("ttl")
+        now = time.time()
+        expires_at = (now + ttl) if ttl else None
 
         if not recipient_id or not encrypted_payload or not nonce:
             await self._send_to_user(sender_id, {
@@ -125,13 +188,17 @@ class ConnectionManager:
             })
             return
 
-        # Store message in DB (always, for offline delivery)
+        # Store message in DB (for offline delivery / sync)
         msg_id = await db.store_message(
             sender_id=sender_id,
             recipient_id=recipient_id,
             encrypted_payload=encrypted_payload,
             nonce=nonce,
-            privacy_mode=privacy_mode
+            privacy_mode=privacy_mode,
+            ephemeral_key=ephemeral_key,
+            signature=signature,
+            ttl=ttl,
+            expires_at=expires_at
         )
 
         # Build the relay envelope
@@ -141,19 +208,19 @@ class ConnectionManager:
             "sender_id": sender_id,
             "encrypted_payload": encrypted_payload,
             "nonce": nonce,
-            "timestamp": time.time(),
-            "privacy_mode": privacy_mode
+            "timestamp": now,
+            "privacy_mode": privacy_mode,
+            "ephemeral_key": ephemeral_key,
+            "signature": signature,
+            "ttl": ttl,
+            "expires_at": expires_at
         }
 
         if privacy_mode == "anonymous":
-            # PLACEHOLDER: Simulate onion-style routing with a random delay.
-            # In production, this would route through Tor or a mixnet.
-            # The delay adds a small amount of timing obfuscation.
             delay = random.uniform(0.5, 2.0)
             asyncio.create_task(
                 self._delayed_relay(recipient_id, relay_envelope, delay, msg_id)
             )
-            # Confirm to sender that message was accepted for anonymous relay
             await self._send_to_user(sender_id, {
                 "type": "message_ack",
                 "id": msg_id,
@@ -161,12 +228,10 @@ class ConnectionManager:
                 "note": "Message queued for anonymous relay"
             })
         else:
-            # Direct or relay mode — send immediately if online
             if self.is_online(recipient_id):
                 await self._send_to_user(recipient_id, relay_envelope)
                 await db.mark_messages_delivered([msg_id])
 
-            # Confirm delivery to sender
             await self._send_to_user(sender_id, {
                 "type": "message_ack",
                 "id": msg_id,
@@ -179,6 +244,10 @@ class ConnectionManager:
         encrypted_payload = data.get("encrypted_payload")
         nonce = data.get("nonce")
         privacy_mode = data.get("privacy_mode", "direct")
+        signature = data.get("signature")
+        ttl = data.get("ttl")
+        now = time.time()
+        expires_at = (now + ttl) if ttl else None
 
         if not group_id or not encrypted_payload or not nonce:
             return
@@ -193,18 +262,23 @@ class ConnectionManager:
             "group_id": group_id,
             "encrypted_payload": encrypted_payload,
             "nonce": nonce,
-            "timestamp": time.time()
+            "timestamp": now,
+            "signature": signature,
+            "ttl": ttl,
+            "expires_at": expires_at
         }
 
         for member_id in member_ids:
-            # Store for each recipient (for offline delivery)
             msg_id = await db.store_message(
                 sender_id=sender_id,
                 recipient_id=member_id,
                 encrypted_payload=encrypted_payload,
                 nonce=nonce,
                 group_id=group_id,
-                privacy_mode=privacy_mode
+                privacy_mode=privacy_mode,
+                signature=signature,
+                ttl=ttl,
+                expires_at=expires_at
             )
 
             if self.is_online(member_id):
@@ -227,14 +301,6 @@ class ConnectionManager:
 
     async def _delayed_relay(self, recipient_id: str, envelope: dict,
                              delay: float, msg_id: int):
-        """
-        PLACEHOLDER for anonymous routing.
-        Adds a random delay to simulate onion-style timing obfuscation.
-
-        PRODUCTION: Replace with actual Tor circuit / mixnet packet routing.
-        The message should be wrapped in multiple encryption layers and
-        routed through independent relay nodes.
-        """
         await asyncio.sleep(delay)
         if self.is_online(recipient_id):
             await self._send_to_user(recipient_id, envelope)
@@ -255,7 +321,11 @@ class ConnectionManager:
                 "encrypted_payload": msg["encrypted_payload"],
                 "nonce": msg["nonce"],
                 "timestamp": msg["timestamp"],
-                "privacy_mode": msg.get("privacy_mode", "direct")
+                "privacy_mode": msg.get("privacy_mode", "direct"),
+                "ephemeral_key": msg.get("ephemeral_key"),
+                "signature": msg.get("signature"),
+                "ttl": msg.get("ttl"),
+                "expires_at": msg.get("expires_at")
             }
             if msg.get("group_id"):
                 envelope["group_id"] = msg["group_id"]

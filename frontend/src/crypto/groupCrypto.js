@@ -78,25 +78,55 @@ export function decryptGroupKey(encryptedKeyB64, nonceB64, senderPublicKeyB64, r
   }
 }
 
+import { signPayload, verifySignature } from './keys';
+
 /**
- * Encrypt a message with the group's symmetric key using nacl.secretbox.
- * All group members with the key can decrypt this.
+ * Encrypt a message with the group's symmetric key using nacl.secretbox,
+ * and optionally sign the ciphertext with the sender's Ed25519 identity key
+ * to prevent impersonation/spoofing by malicious group members.
  *
  * @param {string} plaintext - Message to encrypt
  * @param {string} groupKeyB64 - Group symmetric key (base64)
- * @returns {{ encrypted: string, nonce: string }}
+ * @param {string|null} signingSecretKeyB64 - Sender's Ed25519 private key (base64)
+ * @param {object} meta - { groupId, senderId }
+ * @returns {{ encrypted: string, nonce: string, signature: string|null }}
  */
-export function encryptGroupMessage(plaintext, groupKeyB64) {
+export function encryptGroupMessage(plaintext, groupKeyB64, signingSecretKeyB64 = null, meta = {}) {
   const key = decodeBase64(groupKeyB64);
   const messageBytes = decodeUTF8(plaintext);
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
 
   const encrypted = nacl.secretbox(messageBytes, nonce, key);
+  const encryptedB64 = encodeBase64(encrypted);
+  const nonceB64 = encodeBase64(nonce);
+
+  let signature = null;
+  if (signingSecretKeyB64) {
+    const messageDigest = `${meta.groupId || ''}:${meta.senderId || ''}:${encryptedB64}:${nonceB64}`;
+    signature = signPayload(messageDigest, signingSecretKeyB64);
+  }
 
   return {
-    encrypted: encodeBase64(encrypted),
-    nonce: encodeBase64(nonce)
+    encrypted: encryptedB64,
+    nonce: nonceB64,
+    signature
   };
+}
+
+/**
+ * Verify whether a group message's signature is authentic for the given sender.
+ *
+ * @param {string} signatureB64 - Detached Ed25519 signature
+ * @param {string} senderSigningPubKeyB64 - Claimed sender's Ed25519 public key
+ * @param {object} meta - { groupId, senderId, encrypted, nonce }
+ * @returns {boolean}
+ */
+export function verifyGroupMessageSignature(signatureB64, senderSigningPubKeyB64, meta = {}) {
+  if (!signatureB64 || !senderSigningPubKeyB64) {
+    return false;
+  }
+  const messageDigest = `${meta.groupId || ''}:${meta.senderId || ''}:${meta.encrypted}:${meta.nonce}`;
+  return verifySignature(messageDigest, signatureB64, senderSigningPubKeyB64);
 }
 
 /**
