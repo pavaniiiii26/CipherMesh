@@ -57,15 +57,6 @@ async def init_db():
                 FOREIGN KEY (sender_id) REFERENCES users(user_id)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_messages_recipient
-                ON messages(recipient_id, delivered);
-
-            CREATE INDEX IF NOT EXISTS idx_messages_group
-                ON messages(group_id, timestamp);
-
-            CREATE INDEX IF NOT EXISTS idx_messages_expires
-                ON messages(expires_at);
-
             CREATE TABLE IF NOT EXISTS groups_ (
                 group_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -105,6 +96,18 @@ async def init_db():
             except Exception as e:
                 print(f"[DB Migration Note] {table}.{col}: {e}")
 
+        # Indices (created after migrations to ensure columns like expires_at exist)
+        await db.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_messages_recipient
+                ON messages(recipient_id, delivered);
+
+            CREATE INDEX IF NOT EXISTS idx_messages_group
+                ON messages(group_id, timestamp);
+
+            CREATE INDEX IF NOT EXISTS idx_messages_expires
+                ON messages(expires_at);
+        """)
+        await db.commit()
     finally:
         await db.close()
 

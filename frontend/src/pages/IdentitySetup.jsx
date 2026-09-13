@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { loadOrCreateIdentity, getIdentity } from '../crypto/keys';
 import { registerUser } from '../services/api';
 import { importEncryptedIdentity } from '../crypto/backup';
-import QRCodeDisplay from '../components/QRCodeDisplay';
+import QRCodeCard from '../components/QRCodeCard';
+import { Shield, Key, ArrowRight, Upload, Lock, Check } from 'lucide-react';
 
 export default function IdentitySetup() {
   const [step, setStep] = useState('input'); // 'input' | 'generating' | 'done'
@@ -17,7 +18,6 @@ export default function IdentitySetup() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Check if identity already exists
     const existing = getIdentity();
     if (existing) {
       setIdentity(existing);
@@ -37,12 +37,10 @@ export default function IdentitySetup() {
     setError(null);
 
     try {
-      await new Promise(r => setTimeout(r, 1200));
-
+      await new Promise(r => setTimeout(r, 1000));
       const newIdentity = await loadOrCreateIdentity(cleaned);
       setIdentity(newIdentity);
 
-      // Register public keys with the relay server
       try {
         await registerUser(
           newIdentity.userId,
@@ -76,7 +74,6 @@ export default function IdentitySetup() {
       setRestoreLoading(true);
       const restored = await importEncryptedIdentity(restoreContent.trim(), restorePassphrase);
 
-      // Try re-registering restored identity with server
       try {
         await registerUser(
           restored.identity.userId,
@@ -103,183 +100,112 @@ export default function IdentitySetup() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setRestoreContent(event.target.result);
+    reader.onload = (evt) => {
+      setRestoreContent(evt.target?.result || '');
     };
     reader.readAsText(file);
   };
 
-  const handleContinue = () => {
-    navigate('/contacts');
-  };
-
-  if (step === 'generating') {
-    return (
-      <div className="page identity-page">
-        <div className="identity-generating">
-          <div className="key-animation">
-            <div className="key-ring"></div>
-            <div className="key-ring delay-1"></div>
-            <div className="key-ring delay-2"></div>
-            <span className="key-icon">🔑</span>
-          </div>
-          <h2>Generating cryptographic identity...</h2>
-          <p className="subtitle">
-            Creating dual keypairs: X25519 for encryption & Ed25519 for tamper-proof signatures
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (step === 'done' && identity) {
-    return (
-      <div className="page identity-page">
-        <div className="identity-card glass-panel">
-          <div className="identity-header">
-            <div className="shield-icon">🛡️</div>
-            <h1>Identity Created</h1>
-            <p className="subtitle">Your keys are isolated within this device&apos;s sandbox</p>
-          </div>
-
-          <div className="identity-details">
-            <div className="identity-field">
-              <label>Display Name</label>
-              <span className="value">{identity.displayName}</span>
-            </div>
-            <div className="identity-field">
-              <label>User ID (Fingerprint)</label>
-              <span className="value mono">{identity.userId}</span>
-            </div>
-            <div className="identity-field">
-              <label>Public Key (X25519)</label>
-              <span className="value mono small">
-                {identity.publicKey.substring(0, 24)}...
-              </span>
-            </div>
-            <div className="identity-field">
-              <label>Device Restriction</label>
-              <span className="value safe">This device only (Single-device zero-knowledge)</span>
-            </div>
-          </div>
-
-          <div className="identity-qr">
-            <QRCodeDisplay
-              userId={identity.userId}
-              publicKey={identity.publicKey}
-              displayName={identity.displayName}
-              size={160}
-            />
-          </div>
-
-          <div className="identity-notice">
-            <span className="notice-icon">ℹ️</span>
-            <span>
-              Your private keys never leave this device. Forward secrecy and safety numbers protect all chats against MITM attacks.
-            </span>
-          </div>
-
-          <button className="btn btn-primary" onClick={handleContinue}>
-            Continue to Contacts →
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Input step
   return (
-    <div className="page identity-page">
-      <div className="identity-welcome glass-panel">
-        <div className="logo-section">
-          <div className="logo-icon">◈</div>
-          <h1>CipherMesh</h1>
-          <p className="tagline">Zero-Knowledge Encrypted Mesh Messaging</p>
+    <div className="identity-setup-container">
+      <div className="identity-setup-brand">
+        <div className="brand-icon-box">
+          <Shield size={44} color="#5B6EF5" />
         </div>
+        <h1 className="brand-title">CipherMesh</h1>
+        <p className="brand-sub">Zero-Knowledge Encrypted Messaging</p>
+      </div>
 
-        <div className="setup-form">
-          <h2>Create Your Identity</h2>
-          <p className="subtitle">
-            A cryptographic keypair is generated directly in your browser.
-            No accounts, no email, no phone numbers, zero tracking.
+      {step === 'input' && (
+        <div className="identity-card-box">
+          <h2>Create Cryptographic Identity</h2>
+          <p className="card-sub">
+            Generate client-side X25519 keypair for encryption and Ed25519 keypair for digital signatures.
           </p>
 
-          <div className="input-group">
-            <label htmlFor="display-name">Display Name</label>
+          <div className="field-group">
+            <label className="field-label">Display Name</label>
             <input
-              id="display-name"
               type="text"
               value={displayName}
-              onChange={e => setDisplayName(e.target.value)}
-              placeholder="Choose a display name"
-              maxLength={32}
+              onChange={(e) => setDisplayName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
+              placeholder="e.g. Alice"
+              className="text-input"
               autoFocus
-              onKeyDown={e => e.key === 'Enter' && handleGenerate()}
             />
           </div>
 
-          {error && <div className="error-message">{error}</div>}
+          {error && <div className="badge-error-banner">{error}</div>}
 
-          <div className="btn-column">
-            <button className="btn btn-primary" onClick={handleGenerate}>
-              Generate Identity 🔐
-            </button>
-            <button
-              className="btn btn-secondary btn-sm mt-2"
-              onClick={() => setShowRestoreModal(true)}
-            >
-              📥 Or Restore from Encrypted Backup
-            </button>
-          </div>
+          <button className="btn btn-indigo full-width" onClick={handleGenerate}>
+            <Key size={18} />
+            <span>Generate Cryptographic Keypair</span>
+          </button>
 
-          <div className="privacy-note">
-            <span className="note-icon">🔒</span>
-            <span>
-              Single-Device Architecture: Your identity is tied exclusively to this browser storage. You can export a password-protected backup anytime in Settings.
-            </span>
+          <div className="restore-link-row">
+            <button className="btn-link" onClick={() => setShowRestoreModal(true)}>
+              <Upload size={16} />
+              <span>Restore existing identity backup</span>
+            </button>
           </div>
         </div>
-      </div>
+      )}
+
+      {step === 'generating' && (
+        <div className="identity-card-box centered">
+          <div className="generating-spinner-box">
+            <Key size={32} className="spin-icon" color="#5B6EF5" />
+          </div>
+          <h3>Generating Identity Keys...</h3>
+          <p className="card-sub">Creating entropy and deriving public fingerprint.</p>
+        </div>
+      )}
+
+      {step === 'done' && identity && (
+        <div className="identity-card-box centered">
+          <QRCodeCard identity={identity} />
+
+          <div className="setup-actions">
+            <button className="btn btn-indigo full-width" onClick={() => navigate('/contacts')}>
+              <span>Start Encrypted Chat</span>
+              <ArrowRight size={18} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {showRestoreModal && (
         <div className="modal-backdrop" onClick={() => setShowRestoreModal(false)}>
-          <div className="modal-card glass-panel" onClick={e => e.stopPropagation()}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Restore Identity Backup</h3>
-              <button className="btn-icon close-btn" onClick={() => setShowRestoreModal(false)}>✕</button>
-            </div>
-            <p className="modal-subtitle">
-              Select your <code>.json</code> encrypted backup file and provide your passphrase.
-            </p>
-
-            <div className="input-group">
-              <label>Backup File (.json)</label>
-              <input type="file" accept=".json" onChange={handleFileUpload} />
+              <button className="btn-icon" onClick={() => setShowRestoreModal(false)}>✕</button>
             </div>
 
-            <div className="input-group">
-              <label>Passphrase</label>
+            <div className="field-group">
+              <label className="field-label">Backup File (.json)</label>
+              <input type="file" accept=".json" onChange={handleFileUpload} className="file-input" />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Passphrase</label>
               <input
                 type="password"
                 value={restorePassphrase}
                 onChange={e => setRestorePassphrase(e.target.value)}
                 placeholder="Enter passphrase..."
+                className="text-input"
               />
             </div>
 
-            {error && <div className="error-message">{error}</div>}
+            {error && <div className="badge-error-banner">{error}</div>}
 
             <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                onClick={handleRestore}
-                disabled={restoreLoading || !restorePassphrase}
-              >
-                {restoreLoading ? 'Restoring...' : 'Restore & Enter'}
+              <button className="btn btn-indigo" onClick={handleRestore} disabled={restoreLoading}>
+                {restoreLoading ? 'Decrypting...' : 'Restore & Continue'}
               </button>
-              <button className="btn btn-ghost" onClick={() => setShowRestoreModal(false)}>
-                Cancel
-              </button>
+              <button className="btn btn-ghost" onClick={() => setShowRestoreModal(false)}>Cancel</button>
             </div>
           </div>
         </div>

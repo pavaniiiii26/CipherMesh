@@ -4,17 +4,8 @@ import { getIdentity } from '../crypto/keys';
 import { generateGroupKey, encryptGroupKey } from '../crypto/groupCrypto';
 import { createGroup as createGroupApi, getUserGroups, addGroupMember as addGroupMemberApi } from '../services/api';
 import { getContacts } from '../store/contacts';
-
-/**
- * Groups Management Page
- *
- * PRODUCTION NOTES:
- *   - Simple Sender-Keys Scheme used for prototype:
- *     The group creator creates a random symmetric key, encrypts it individually
- *     with each member's public key (via nacl.box), and stores it on the relay.
- *   - In production, this should be replaced with Messaging Layer Security (MLS, RFC 9420)
- *     or the Signal Sesame/TreeKEM protocol for ratcheted forward secrecy and post-compromise security.
- */
+import IdentityAvatar from '../components/IdentityAvatar';
+import { Users, Plus, Check, Lock, ShieldCheck, X } from 'lucide-react';
 
 const GROUP_KEYS_STORAGE = 'ciphermesh_group_keys';
 
@@ -56,23 +47,17 @@ export default function Groups() {
     setError(null);
 
     try {
-      // 1. Generate new symmetric group key
       const newGroupKey = generateGroupKey();
-
-      // 2. Call backend to create group metadata
       const group = await createGroupApi(groupName.trim(), identity.userId);
       const groupId = group.group_id;
 
-      // 3. Encrypt group key for self and store in localStorage
       const storedKeys = JSON.parse(localStorage.getItem(GROUP_KEYS_STORAGE) || '{}');
       storedKeys[groupId] = newGroupKey;
       localStorage.setItem(GROUP_KEYS_STORAGE, JSON.stringify(storedKeys));
 
-      // Add self as member in backend
       const selfEnc = encryptGroupKey(newGroupKey, identity.publicKey, identity.secretKey);
       await addGroupMemberApi(groupId, identity.userId, selfEnc.encrypted, selfEnc.nonce);
 
-      // 4. Encrypt group key individually for each selected contact & add them
       for (const contactId of selectedContacts) {
         const contact = contacts.find(c => c.user_id === contactId);
         if (contact && contact.public_key) {
@@ -93,90 +78,104 @@ export default function Groups() {
   };
 
   return (
-    <div className="page groups-page">
-      <div className="page-header">
+    <div className="page groups-page-container">
+      <div className="page-header-row">
         <div>
-          <h1>Encrypted Groups</h1>
-          <p className="subtitle">Sender-keys encrypted group messaging (MLS placeholder)</p>
+          <h1 className="page-main-title">Encrypted Groups</h1>
+          <p className="page-subtitle">Sender-keys encrypted group messaging with Ed25519 signatures</p>
         </div>
-        <button className="btn btn-accent" onClick={() => setShowCreate(!showCreate)}>
-          {showCreate ? '✕ Cancel' : '+ New Group'}
+        <button className="btn btn-indigo" onClick={() => setShowCreate(!showCreate)}>
+          {showCreate ? <X size={18} /> : <Plus size={18} />}
+          <span>{showCreate ? 'Cancel' : 'New Group'}</span>
         </button>
       </div>
 
       {showCreate && (
-        <div className="create-group-panel glass-panel">
-          <h3>Create Secure Group</h3>
-          <div className="input-group">
-            <label>Group Name</label>
+        <div className="group-creation-card">
+          <h3>Create Encrypted Group</h3>
+          <p className="card-sub">Generate symmetric key & distribute to selected contacts</p>
+
+          <div className="field-group">
+            <label className="field-label">Group Name</label>
             <input
               type="text"
               value={groupName}
               onChange={e => setGroupName(e.target.value)}
-              placeholder="e.g. Cypherpunks Collective"
-              maxLength={40}
+              placeholder="e.g. Core Security Team"
+              className="text-input"
             />
           </div>
 
-          <div className="member-selection">
-            <label>Add Members from Contacts</label>
+          <div className="field-group">
+            <label className="field-label">Select Group Members</label>
             {contacts.length === 0 ? (
-              <p className="subtitle">No contacts available. Add contacts first to invite them.</p>
+              <p className="hint-text">Add contacts first to include them in group chats.</p>
             ) : (
-              <div className="contacts-picker-list">
-                {contacts.map(c => (
-                  <label key={c.user_id} className="contact-picker-item">
-                    <input
-                      type="checkbox"
-                      checked={selectedContacts.includes(c.user_id)}
-                      onChange={() => toggleContactSelection(c.user_id)}
-                    />
-                    <span className="picker-name">{c.display_name}</span>
-                    <span className="picker-id mono">{c.user_id.substring(0, 8)}</span>
-                  </label>
-                ))}
+              <div className="contact-selection-list">
+                {contacts.map(c => {
+                  const isSelected = selectedContacts.includes(c.user_id);
+                  return (
+                    <div
+                      key={c.user_id}
+                      className={`select-contact-item ${isSelected ? 'selected' : ''}`}
+                      onClick={() => toggleContactSelection(c.user_id)}
+                    >
+                      <IdentityAvatar name={c.display_name} userId={c.user_id} size={36} />
+                      <span className="contact-item-name">{c.display_name}</span>
+                      <div className="check-box-square">
+                        {isSelected && <Check size={14} color="#FFFFFF" />}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          {error && <div className="error-message">{error}</div>}
+          {error && <div className="badge-error-banner">{error}</div>}
 
-          <div className="btn-row">
+          <div className="action-row">
             <button
-              className="btn btn-primary"
+              className="btn btn-indigo"
               onClick={handleCreateGroup}
               disabled={!groupName.trim() || loading}
             >
-              {loading ? 'Creating...' : 'Create & Distribute Keys'}
+              {loading ? 'Generating Key...' : 'Create Group'}
             </button>
           </div>
         </div>
       )}
 
-      <div className="groups-list">
+      <div className="groups-grid-list">
         {groups.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">🛡️</div>
-            <h3>No groups joined</h3>
-            <p>Create a group to start encrypted group communication</p>
+          <div className="empty-groups-card">
+            <Users size={40} color="#9CA3AF" />
+            <h3>No encrypted groups yet</h3>
+            <p>Create a group to exchange messages signed with Ed25519 digital signatures.</p>
+            <button className="btn btn-indigo" onClick={() => setShowCreate(true)}>
+              <Plus size={16} />
+              <span>Create Group</span>
+            </button>
           </div>
         ) : (
-          groups.map(g => (
+          groups.map(group => (
             <div
-              key={g.group_id}
-              className="group-card glass-panel"
-              onClick={() => navigate(`/chat/group:${g.group_id}`)}
+              key={group.group_id}
+              className="group-card-item"
+              onClick={() => navigate(`/chat/group:${group.group_id}`)}
             >
-              <div className="group-card-header">
-                <div className="group-avatar">👥</div>
-                <div className="group-info">
-                  <div className="group-name">{g.name}</div>
-                  <div className="group-id mono">ID: {g.group_id}</div>
+              <IdentityAvatar name={group.name} isGroup={true} size={48} />
+              <div className="group-card-info">
+                <div className="group-card-header">
+                  <span className="group-card-name">{group.name}</span>
+                  <span className="badge-e2ee">
+                    <Lock size={12} />
+                    <span>E2EE</span>
+                  </span>
                 </div>
-              </div>
-              <div className="group-card-footer">
-                <span className="tag">Sender-Key Protected</span>
-                <span className="action-hint">Enter Chat →</span>
+                <div className="group-card-meta">
+                  <span className="mono">ID: {group.group_id.substring(0, 10)}</span>
+                </div>
               </div>
             </div>
           ))

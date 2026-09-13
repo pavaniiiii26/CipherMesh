@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { generateSafetyNumber, getIdentity } from '../crypto/keys';
 import { verifyContact } from '../store/contacts';
 import { QRCodeSVG } from 'qrcode.react';
+import { ShieldCheck, ShieldAlert, Info, X, Check } from 'lucide-react';
 
 export default function SafetyNumberModal({ contact, onClose, onVerificationChange }) {
   const [safetyNumber, setSafetyNumber] = useState(null);
@@ -32,13 +33,15 @@ export default function SafetyNumberModal({ contact, onClose, onVerificationChan
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card glass-panel safety-number-card" onClick={e => e.stopPropagation()}>
+      <div className="modal-card safety-number-card" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-row">
-            <span className="modal-icon">🛡️</span>
+            <ShieldCheck size={22} color="#5B6EF5" />
             <h3>Verify Safety Numbers</h3>
           </div>
-          <button className="btn-icon close-btn" onClick={onClose}>✕</button>
+          <button className="btn-icon close-btn" onClick={onClose}>
+            <X size={18} />
+          </button>
         </div>
 
         <p className="modal-subtitle">
@@ -47,7 +50,10 @@ export default function SafetyNumberModal({ contact, onClose, onVerificationChan
 
         {contact.keyChanged && (
           <div className="alert-banner warning">
-            ⚠️ <strong>Security Alert:</strong> This contact&apos;s public key was recently replaced. You should re-verify this safety number before continuing your chat!
+            <ShieldAlert size={18} color="#EF4444" />
+            <span>
+              <strong>Security Alert:</strong> This contact&apos;s public key was recently replaced. Re-verify before continuing your chat.
+            </span>
           </div>
         )}
 
@@ -60,8 +66,8 @@ export default function SafetyNumberModal({ contact, onClose, onVerificationChan
                 <QRCodeSVG
                   value={`ciphermesh:safety:${safetyNumber?.formatted}`}
                   size={140}
-                  bgColor="#0b0f19"
-                  fgColor="#00f0ff"
+                  bgColor="#FFFFFF"
+                  fgColor="#1E293B"
                   level="M"
                 />
               </div>
@@ -78,7 +84,8 @@ export default function SafetyNumberModal({ contact, onClose, onVerificationChan
         </div>
 
         <div className="safety-explanation">
-          <span>💡 How it works:</span> Both you and {contact.display_name} will see the exact same 60 numbers. If the numbers match on both screens, your conversation is 100% end-to-end encrypted and immune to man-in-the-middle attacks.
+          <Info size={16} color="#5B6EF5" />
+          <span>Both you and {contact.display_name} will see the exact same 60 numbers. If numbers match on both screens, your conversation is 100% end-to-end encrypted.</span>
         </div>
 
         <div className="modal-actions">
@@ -86,7 +93,17 @@ export default function SafetyNumberModal({ contact, onClose, onVerificationChan
             className={`btn ${isVerified ? 'btn-success' : 'btn-accent'}`}
             onClick={handleToggleVerified}
           >
-            {isVerified ? '✓ Identity Verified (Click to Revoke)' : '🛡️ Mark as Verified'}
+            {isVerified ? (
+              <>
+                <Check size={16} />
+                <span>Verified (Click to Revoke)</span>
+              </>
+            ) : (
+              <>
+                <ShieldCheck size={16} />
+                <span>Mark as Verified</span>
+              </>
+            )}
           </button>
           <button className="btn btn-ghost" onClick={onClose}>
             Close

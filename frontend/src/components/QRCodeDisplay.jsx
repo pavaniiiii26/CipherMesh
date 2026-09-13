@@ -2,13 +2,13 @@ import { QRCodeSVG } from 'qrcode.react';
 
 /**
  * Renders a QR code containing the user's identity payload.
- * The payload includes user_id, public_key, and display_name
- * so a scanner can add this user as a contact instantly.
+ * The payload includes user_id, public_key, signing_public_key, and display_name
  */
-export default function QRCodeDisplay({ userId, publicKey, displayName, size = 200 }) {
+export default function QRCodeDisplay({ userId, publicKey, signingPublicKey, displayName, size = 200 }) {
   const payload = JSON.stringify({
     user_id: userId,
     public_key: publicKey,
+    signing_public_key: signingPublicKey,
     display_name: displayName,
   });
 
@@ -19,12 +19,11 @@ export default function QRCodeDisplay({ userId, publicKey, displayName, size = 2
           value={payload}
           size={size}
           level="M"
-          bgColor="transparent"
-          fgColor="#00F0FF"
+          bgColor="#FFFFFF"
+          fgColor="#1E293B"
           includeMargin={false}
         />
       </div>
-      <div className="qr-label">Scan to add as contact</div>
     </div>
   );
 }

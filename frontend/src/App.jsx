@@ -8,6 +8,7 @@ import wsManager, { ConnectionState } from './services/websocket';
 import { getPendingMessages, acknowledgeMessages } from './services/api';
 
 import Navbar from './components/Navbar';
+import BottomTabBar from './components/BottomTabBar';
 import IdentitySetup from './pages/IdentitySetup';
 import Contacts from './pages/Contacts';
 import Chat from './pages/Chat';
@@ -175,6 +176,7 @@ export default function App() {
   }, [identity]);
 
   const hasIdentity = Boolean(identity);
+  const isChatRoute = location.pathname.startsWith('/chat/');
 
   return (
     <div className="app-container">
@@ -208,6 +210,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      {hasIdentity && !isChatRoute && <BottomTabBar />}
     </div>
   );
 }

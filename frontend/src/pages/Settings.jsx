@@ -3,6 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import { getIdentity, deleteIdentity } from '../crypto/keys';
 import { exportEncryptedIdentity, importEncryptedIdentity } from '../crypto/backup';
 import PrivacyModeSelector from '../components/PrivacyModeSelector';
+import IdentityAvatar from '../components/IdentityAvatar';
+import {
+  Settings as SettingsIcon,
+  Shield,
+  Key,
+  Download,
+  Upload,
+  Trash2,
+  Lock,
+  FileText,
+  Check,
+  X,
+  AlertTriangle,
+  Info,
+  Timer
+} from 'lucide-react';
 
 const SETTINGS_STORAGE_KEY = 'ciphermesh_settings';
 
@@ -14,7 +30,6 @@ export default function Settings() {
   const [identity, setIdentity] = useState(null);
   const [saveNote, setSaveNote] = useState(false);
 
-  // Backup & Restore states
   const [showExportModal, setShowExportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [exportPassphrase, setExportPassphrase] = useState('');
@@ -70,7 +85,6 @@ export default function Settings() {
     saveSetting({ defaultTtl: val });
   };
 
-  // Export encrypted backup handler
   const handleExportBackup = async () => {
     setBackupError(null);
     if (!exportPassphrase || exportPassphrase.length < 6) {
@@ -82,7 +96,6 @@ export default function Settings() {
       setIsExporting(true);
       const backupJson = await exportEncryptedIdentity(exportPassphrase);
 
-      // Trigger download
       const blob = new Blob([backupJson], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -98,34 +111,37 @@ export default function Settings() {
         setBackupSuccess(null);
       }, 1800);
     } catch (err) {
-      setBackupError(err.message);
+      setBackupError(err.message || 'Export failed');
     } finally {
       setIsExporting(false);
     }
   };
 
-  // Import encrypted backup handler
   const handleImportBackup = async () => {
     setBackupError(null);
     if (!importFileContent.trim()) {
-      setBackupError('Please select or paste your backup JSON file');
+      setBackupError('Please select or paste backup file content');
       return;
     }
     if (!importPassphrase) {
-      setBackupError('Please enter your passphrase');
+      setBackupError('Please enter the decryption passphrase');
       return;
     }
 
     try {
       setIsImporting(true);
-      await importEncryptedIdentity(importFileContent.trim(), importPassphrase);
-      setBackupSuccess('Identity and contacts restored successfully! Reloading...');
+      const res = await importEncryptedIdentity(importFileContent.trim(), importPassphrase);
+      setIdentity(res.identity);
+      setBackupSuccess('Identity and contacts restored successfully!');
       setTimeout(() => {
-        navigate('/contacts');
+        setShowImportModal(false);
+        setImportPassphrase('');
+        setImportFileContent('');
+        setBackupSuccess(null);
         window.location.reload();
-      }, 1200);
+      }, 1500);
     } catch (err) {
-      setBackupError(err.message);
+      setBackupError(err.message || 'Decryption failed — wrong passphrase or corrupted file');
     } finally {
       setIsImporting(false);
     }
@@ -135,249 +151,225 @@ export default function Settings() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setImportFileContent(event.target.result);
+    reader.onload = (evt) => {
+      setImportFileContent(evt.target?.result || '');
     };
     reader.readAsText(file);
   };
 
   const handleDeleteIdentity = () => {
-    if (confirm('CRITICAL ACTION: This will permanently delete your private keys, contacts, and all message histories stored on this device. Are you completely sure?')) {
+    if (confirm('WARNING: Deleting your identity will purge your private keys. Export a backup first! Continue?')) {
       deleteIdentity();
-      localStorage.removeItem(SETTINGS_STORAGE_KEY);
-      localStorage.removeItem('ciphermesh_group_keys');
       navigate('/');
-      window.location.reload();
     }
   };
 
   return (
-    <div className="page settings-page">
-      <div className="page-header">
+    <div className="page settings-page-container">
+      <div className="page-header-row">
         <div>
-          <h1>Settings & Privacy</h1>
-          <p className="subtitle">Configure encryption parameters, metadata controls, and identity backups</p>
+          <h1 className="page-main-title">Settings & Privacy</h1>
+          <p className="page-subtitle">Configure encryption, network metadata policies, and identity backups</p>
         </div>
-        {saveNote && <div className="success-badge">✓ Setting saved</div>}
-      </div>
-
-      {/* Multi-device architecture disclosure */}
-      <div className="settings-section glass-panel notice-box">
-        <div className="notice-icon">📱</div>
-        <div className="notice-content">
-          <h4>Single-Device Zero-Knowledge Design</h4>
-          <p>
-            Your cryptographic keys exist exclusively on this device/browser sandbox. Multi-device sync is intentionally omitted to prevent server-side key synchronization vulnerabilities and maintain strict zero-knowledge integrity.
-          </p>
-        </div>
-      </div>
-
-      {/* Network Privacy & Routing Modes */}
-      <div className="settings-section glass-panel">
-        <PrivacyModeSelector value={privacyMode} onChange={handlePrivacyChange} />
-
-        {/* Anonymous Mode Realistic Disclosure */}
-        <div className="crypto-audit-note mt-3">
-          <span>🛡️ Anonymous Mode Disclosure:</span> In this prototype, Anonymous Mode routes packets through an intermediate relay hop with synthetic random timing delay (0.5s – 2.0s) to emulate traffic-analysis resistance. In production, this would be backed by true onion-routed <strong>Tor Hidden Services (v3)</strong> or the <strong>Nym Mixnet</strong>.
-        </div>
-      </div>
-
-      {/* Privacy & Metadata Leakage Controls */}
-      <div className="settings-section glass-panel">
-        <h3>Metadata & Privacy Controls</h3>
-        <p className="subtitle">Configure features that may leak communication timing or metadata</p>
-
-        <div className="settings-toggle-list">
-          <div className="toggle-row">
-            <div className="toggle-info">
-              <span className="toggle-title">Typing Indicators</span>
-              <span className="toggle-desc">
-                Broadcast real-time typing state to recipients while composing a message.
-              </span>
-            </div>
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={sendTyping}
-                onChange={(e) => handleToggleTyping(e.target.checked)}
-              />
-              <span className="slider round"></span>
-            </label>
+        {saveNote && (
+          <div className="settings-saved-badge">
+            <Check size={14} />
+            <span>Saved</span>
           </div>
-
-          <div className="toggle-row">
-            <div className="toggle-info">
-              <span className="toggle-title">Read Receipts</span>
-              <span className="toggle-desc">
-                Notify senders with blue double ticks when you open their messages. <em>Disabling this prevents reading timestamp metadata leakage.</em>
-              </span>
-            </div>
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={sendReadReceipts}
-                onChange={(e) => handleToggleReadReceipts(e.target.checked)}
-              />
-              <span className="slider round"></span>
-            </label>
-          </div>
-
-          <div className="toggle-row">
-            <div className="toggle-info">
-              <span className="toggle-title">Default Disappearing Messages (TTL)</span>
-              <span className="toggle-desc">
-                Automatically purge messages on client and relay server after the specified expiration time.
-              </span>
-            </div>
-            <select
-              value={defaultTtl}
-              onChange={(e) => handleChangeTtl(Number(e.target.value))}
-              className="ttl-select"
-            >
-              <option value={0}>Off (Never)</option>
-              <option value={30}>30 Seconds</option>
-              <option value={300}>5 Minutes</option>
-              <option value={3600}>1 Hour</option>
-              <option value={86400}>24 Hours</option>
-            </select>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Cryptographic Identity & Backup */}
       {identity && (
-        <div className="settings-section glass-panel">
-          <div className="section-header-row">
-            <h3>Cryptographic Identity & Keys</h3>
-            <div className="btn-row">
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowExportModal(true)}>
-                🔐 Export Encrypted Backup
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowImportModal(true)}>
-                📥 Restore Backup
-              </button>
-            </div>
+        <div className="settings-section-card">
+          <div className="card-header-row">
+            <Key size={20} color="#5B6EF5" />
+            <h2>Cryptographic Identity</h2>
           </div>
 
-          <div className="identity-info-list">
-            <div className="info-row">
-              <span className="info-label">Display Name</span>
-              <span className="info-val">{identity.displayName}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Fingerprint (User ID)</span>
-              <span className="info-val mono">{identity.userId}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Encryption Key (X25519)</span>
-              <span className="info-val mono break-all">{identity.publicKey}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Signing Key (Ed25519)</span>
-              <span className="info-val mono break-all">{identity.signingPublicKey || 'Active'}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Private Key Protection</span>
-              <span className="info-val safe">Local Browser Sandbox (never leaves device)</span>
+          <div className="identity-overview-box">
+            <IdentityAvatar name={identity.displayName} userId={identity.userId} size={54} />
+            <div className="identity-details">
+              <h3 className="identity-title">{identity.displayName}</h3>
+              <div className="detail-line">
+                <span className="label">User ID (Fingerprint):</span>
+                <code className="mono">{identity.userId}</code>
+              </div>
+              <div className="detail-line">
+                <span className="label">Public Key (X25519):</span>
+                <code className="mono truncate">{identity.publicKey}</code>
+              </div>
+              {identity.signingPublicKey && (
+                <div className="detail-line">
+                  <span className="label">Signing Key (Ed25519):</span>
+                  <code className="mono truncate">{identity.signingPublicKey}</code>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Danger Zone */}
-      <div className="settings-section glass-panel danger-zone">
-        <h3>Danger Zone</h3>
-        <p className="subtitle">
-          Permanently purge local identity and delete cryptographic keys and chat history from this device.
-        </p>
-        <button className="btn btn-danger" onClick={handleDeleteIdentity}>
-          Wipe Local Identity & Keys
-        </button>
+      {/* Network Privacy Mode */}
+      <div className="settings-section-card">
+        <PrivacyModeSelector value={privacyMode} onChange={handlePrivacyChange} />
       </div>
 
-      {/* Export Backup Modal */}
+      {/* Metadata Policies */}
+      <div className="settings-section-card">
+        <div className="card-header-row">
+          <Shield size={20} color="#5B6EF5" />
+          <h2>Metadata & Messaging Policies</h2>
+        </div>
+
+        <div className="toggle-setting-row">
+          <div className="setting-info">
+            <div className="setting-title">Typing Indicators</div>
+            <div className="setting-desc">
+              Broadcast when you are typing to active chat recipients (disabled by default to prevent timing leak metadata).
+            </div>
+          </div>
+          <label className="switch-toggle">
+            <input
+              type="checkbox"
+              checked={sendTyping}
+              onChange={(e) => handleToggleTyping(e.target.checked)}
+            />
+            <span className="slider-round" />
+          </label>
+        </div>
+
+        <div className="toggle-setting-row">
+          <div className="setting-info">
+            <div className="setting-title">Read Receipts</div>
+            <div className="setting-desc">
+              Send read receipt notifications when you open a contact&apos;s message thread.
+            </div>
+          </div>
+          <label className="switch-toggle">
+            <input
+              type="checkbox"
+              checked={sendReadReceipts}
+              onChange={(e) => handleToggleReadReceipts(e.target.checked)}
+            />
+            <span className="slider-round" />
+          </label>
+        </div>
+
+        <div className="select-setting-row">
+          <div className="setting-info">
+            <div className="setting-title">Default Disappearing Messages Timer</div>
+            <div className="setting-desc">
+              Global TTL applied automatically to new messages.
+            </div>
+          </div>
+          <select
+            value={defaultTtl}
+            onChange={(e) => handleChangeTtl(Number(e.target.value))}
+            className="select-input"
+          >
+            <option value={0}>Off (Manual Purge)</option>
+            <option value={30}>30 Seconds</option>
+            <option value={300}>5 Minutes</option>
+            <option value={3600}>1 Hour</option>
+            <option value={86400}>24 Hours</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Identity Backup & Export */}
+      <div className="settings-section-card">
+        <div className="card-header-row">
+          <Download size={20} color="#5B6EF5" />
+          <h2>Encrypted Backup & Migration</h2>
+        </div>
+
+        <p className="card-desc-text">
+          Export your identity keypairs and contacts encrypted with PBKDF2 (100,000 rounds) and AES-256-GCM.
+        </p>
+
+        <div className="btn-row-flex">
+          <button className="btn btn-indigo" onClick={() => setShowExportModal(true)}>
+            <Download size={16} />
+            <span>Export Backup</span>
+          </button>
+          <button className="btn btn-outline" onClick={() => setShowImportModal(true)}>
+            <Upload size={16} />
+            <span>Restore Backup</span>
+          </button>
+          <button className="btn btn-danger" onClick={handleDeleteIdentity}>
+            <Trash2 size={16} />
+            <span>Delete Identity</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Export Modal */}
       {showExportModal && (
         <div className="modal-backdrop" onClick={() => setShowExportModal(false)}>
-          <div className="modal-card glass-panel" onClick={e => e.stopPropagation()}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Export Encrypted Backup</h3>
-              <button className="btn-icon close-btn" onClick={() => setShowExportModal(false)}>✕</button>
+              <button className="btn-icon" onClick={() => setShowExportModal(false)}><X size={18} /></button>
             </div>
-            <p className="modal-subtitle">
-              Choose a strong passphrase to encrypt your private keys and contacts using AES-256-GCM + PBKDF2 (100,000 rounds).
-            </p>
+            <p className="modal-sub">Choose a passphrase to encrypt your secret identity keys.</p>
 
-            <div className="input-group">
-              <label>Passphrase (minimum 6 characters)</label>
+            <div className="field-group">
+              <label className="field-label">Passphrase (min 6 chars)</label>
               <input
                 type="password"
                 value={exportPassphrase}
                 onChange={e => setExportPassphrase(e.target.value)}
-                placeholder="Enter a strong passphrase..."
-                autoFocus
+                placeholder="Enter strong passphrase..."
+                className="text-input"
               />
             </div>
 
-            {backupError && <div className="error-message">{backupError}</div>}
-            {backupSuccess && <div className="success-message">{backupSuccess}</div>}
+            {backupError && <div className="badge-error-banner">{backupError}</div>}
+            {backupSuccess && <div className="badge-success-banner">{backupSuccess}</div>}
 
             <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                onClick={handleExportBackup}
-                disabled={isExporting || exportPassphrase.length < 6}
-              >
-                {isExporting ? 'Encrypting...' : 'Download Encrypted Backup (.json)'}
+              <button className="btn btn-indigo" onClick={handleExportBackup} disabled={isExporting}>
+                {isExporting ? 'Encrypting...' : 'Generate Backup File'}
               </button>
-              <button className="btn btn-ghost" onClick={() => setShowExportModal(false)}>
-                Cancel
-              </button>
+              <button className="btn btn-ghost" onClick={() => setShowExportModal(false)}>Cancel</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Restore Backup Modal */}
+      {/* Import Modal */}
       {showImportModal && (
         <div className="modal-backdrop" onClick={() => setShowImportModal(false)}>
-          <div className="modal-card glass-panel" onClick={e => e.stopPropagation()}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Restore Identity from Backup</h3>
-              <button className="btn-icon close-btn" onClick={() => setShowImportModal(false)}>✕</button>
-            </div>
-            <p className="modal-subtitle">
-              Upload your encrypted backup file (.json) and enter the passphrase used to create it.
-            </p>
-
-            <div className="input-group">
-              <label>Backup File</label>
-              <input type="file" accept=".json" onChange={handleFileUpload} />
+              <h3>Restore Encrypted Backup</h3>
+              <button className="btn-icon" onClick={() => setShowImportModal(false)}><X size={18} /></button>
             </div>
 
-            <div className="input-group">
-              <label>Passphrase</label>
+            <div className="field-group">
+              <label className="field-label">Backup File (.json)</label>
+              <input type="file" accept=".json" onChange={handleFileUpload} className="file-input" />
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">Decryption Passphrase</label>
               <input
                 type="password"
                 value={importPassphrase}
                 onChange={e => setImportPassphrase(e.target.value)}
-                placeholder="Enter the passphrase..."
+                placeholder="Enter passphrase..."
+                className="text-input"
               />
             </div>
 
-            {backupError && <div className="error-message">{backupError}</div>}
-            {backupSuccess && <div className="success-message">{backupSuccess}</div>}
+            {backupError && <div className="badge-error-banner">{backupError}</div>}
+            {backupSuccess && <div className="badge-success-banner">{backupSuccess}</div>}
 
             <div className="modal-actions">
-              <button
-                className="btn btn-primary"
-                onClick={handleImportBackup}
-                disabled={isImporting || !importPassphrase}
-              >
-                {isImporting ? 'Decrypting & Restoring...' : 'Restore Identity'}
+              <button className="btn btn-indigo" onClick={handleImportBackup} disabled={isImporting}>
+                {isImporting ? 'Decrypting...' : 'Restore Identity'}
               </button>
-              <button className="btn btn-ghost" onClick={() => setShowImportModal(false)}>
-                Cancel
-              </button>
+              <button className="btn btn-ghost" onClick={() => setShowImportModal(false)}>Cancel</button>
             </div>
           </div>
         </div>
@@ -385,4 +377,3 @@ export default function Settings() {
     </div>
   );
 }
-

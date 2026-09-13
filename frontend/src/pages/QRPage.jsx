@@ -1,34 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getIdentity } from '../crypto/keys';
-import QRCodeDisplay from '../components/QRCodeDisplay';
+import QRCodeCard from '../components/QRCodeCard';
 import { addContact } from '../store/contacts';
 import { resolveContact } from '../services/api';
 import wsManager from '../services/websocket';
+import { QrCode, Scan, Copy, Check, Info, ArrowRight } from 'lucide-react';
 
 export default function QRPage() {
   const [activeTab, setActiveTab] = useState('my-qr'); // 'my-qr' | 'scan'
   const [scannedText, setScannedText] = useState('');
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
-  const [copied, setCopied] = useState(false);
 
   const navigate = useNavigate();
   const identity = getIdentity();
-
-  const handleCopyPayload = () => {
-    if (!identity) return;
-    const payload = JSON.stringify({
-      user_id: identity.userId,
-      public_key: identity.publicKey,
-      signing_public_key: identity.signingPublicKey,
-      display_name: identity.displayName,
-    }, null, 2);
-
-    navigator.clipboard.writeText(payload);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
-  };
 
   const handleProcessPayload = async () => {
     setError(null);
@@ -46,7 +32,6 @@ export default function QRPage() {
         contactData = JSON.parse(scannedText.trim());
         source = 'qr_scan';
       } catch {
-        // Assume plain user_id and resolve via relay server
         contactData = await resolveContact(scannedText.trim());
         source = 'manual_id';
       }
@@ -70,85 +55,66 @@ export default function QRPage() {
   };
 
   return (
-    <div className="page qr-page">
-      <div className="tabs-header">
+    <div className="page qr-page-container">
+      <div className="segmented-tab-control">
         <button
-          className={`tab-btn ${activeTab === 'my-qr' ? 'active' : ''}`}
+          className={`segment-btn ${activeTab === 'my-qr' ? 'active' : ''}`}
           onClick={() => setActiveTab('my-qr')}
         >
-          My QR Code
+          <QrCode size={18} />
+          <span>My QR Code</span>
         </button>
         <button
-          className={`tab-btn ${activeTab === 'scan' ? 'active' : ''}`}
+          className={`segment-btn ${activeTab === 'scan' ? 'active' : ''}`}
           onClick={() => setActiveTab('scan')}
         >
-          Scan / Import
+          <Scan size={18} />
+          <span>Scan / Import</span>
         </button>
       </div>
 
       {activeTab === 'my-qr' && identity && (
-        <div className="qr-container glass-panel">
-          <h2>Your Public Identity</h2>
-          <p className="subtitle">
-            Share this QR code with contacts to establish an end-to-end encrypted channel.
-          </p>
-
-          <div className="qr-box">
-            <QRCodeDisplay
-              userId={identity.userId}
-              publicKey={identity.publicKey}
-              displayName={identity.displayName}
-              size={220}
-            />
-          </div>
-
-          <div className="qr-actions">
-            <button className="btn btn-secondary" onClick={handleCopyPayload}>
-              {copied ? '✓ Payload Copied!' : '📋 Copy Raw Payload'}
-            </button>
-          </div>
-
-          <div className="crypto-details">
-            <div className="detail-item">
-              <label>Fingerprint (User ID):</label>
-              <code className="mono">{identity.userId}</code>
-            </div>
-            <div className="detail-item">
-              <label>Public Key:</label>
-              <code className="mono truncate">{identity.publicKey}</code>
-            </div>
-          </div>
+        <div className="qr-card-center-layout">
+          <QRCodeCard
+            identity={identity}
+            onScanClick={() => setActiveTab('scan')}
+          />
         </div>
       )}
 
       {activeTab === 'scan' && (
-        <div className="scan-container glass-panel">
-          <h2>Add Contact via QR / Fingerprint</h2>
-          <p className="subtitle">
-            Scan a contact&apos;s QR code or paste their exported payload / user ID.
-          </p>
+        <div className="scan-card-wrapper">
+          <div className="scan-card-header">
+            <h2>Add Contact via QR / Fingerprint</h2>
+            <p className="card-sub">
+              Scan a contact&apos;s QR code or paste their exported payload / User ID.
+            </p>
+          </div>
 
-          <div className="input-group">
-            <label>QR Payload JSON or User ID</label>
+          <div className="input-group-field">
+            <label className="field-label">QR Payload JSON or User ID</label>
             <textarea
               rows={5}
               value={scannedText}
               onChange={e => setScannedText(e.target.value)}
               placeholder='Paste JSON payload like:&#10;{"user_id": "...", "public_key": "...", "display_name": "..."}'
+              className="scan-textarea"
             />
           </div>
 
-          {error && <div className="error-message">{error}</div>}
-          {message && <div className="success-message">{message}</div>}
+          {error && <div className="badge-error-banner">{error}</div>}
+          {message && <div className="badge-success-banner">{message}</div>}
 
-          <div className="btn-row">
-            <button className="btn btn-primary" onClick={handleProcessPayload}>
-              Import & Verify Contact
+          <div className="scan-actions-row">
+            <button className="btn btn-indigo" onClick={handleProcessPayload}>
+              <span>Import & Verify Contact</span>
+              <ArrowRight size={16} />
             </button>
           </div>
 
-          <div className="scan-tip">
-            <span>💡 Tip:</span> You can test multi-user messaging by opening an incognito window or another browser, generating a second identity, and copying the payload here!
+          <div className="scan-tip-card">
+            <Info size={18} color="#5B6EF5" />
+            <span>Tip: Open an incognito tab to create a second identity, copy its payload, and test multi-user E2E encrypted chat!</span>
           </div>
         </div>
       )}
