@@ -1,4 +1,4 @@
-# CipherMesh — Privacy-Focused Encrypted Messaging Prototype
+# CipherMesh — Privacy-Focused Encrypted Messaging PROTOTYPE
 
 CipherMesh is a hardened end-to-end (E2E) encrypted messaging application built with a **Python FastAPI** relay backend and a **React (JS)** frontend. 
 
